@@ -178,7 +178,8 @@ export default function Page() {
               background: "linear-gradient(135deg, #C9A84C, #F0CC6E, #C9A84C)",
             }}
           >
-            Kep. Bangka Belitung
+            Kepolisian Negara Republik Indonesia Daerah Kepulauan Bangka
+            Belitung
           </span>
           <div className="font-oswald text-2xl font-bold text-[#F0CC6E] tracking-wide uppercase leading-tight">
             Bhaypark Mini Soccer
@@ -415,8 +416,7 @@ export default function Page() {
             Bhaypark Mini Soccer · Kep. Babel
           </div>
           <div className="text-[11px] text-[#444] mt-1">
-            © {new Date().getFullYear()} Kepolisian Daerah Kepulauan Bangka
-            Belitung
+            © {new Date().getFullYear()} Pelayanan Markas Polda Kep. Babel
           </div>
         </div>
       </div>
