@@ -265,7 +265,7 @@ export default function Page() {
             }}
           >
             Kepolisian Negara Republik Indonesia Daerah Kepulauan Bangka
-            Belitung
+            Belitung Pelayanan Markas
           </span>
           <div className="font-oswald text-2xl font-bold text-[#F0CC6E] tracking-wide uppercase leading-tight">
             Bhaypark Mini Soccer
