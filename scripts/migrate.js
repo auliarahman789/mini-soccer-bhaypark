@@ -3,6 +3,7 @@
 // Make sure DATABASE_URL is set in your environment
 
 import { neon } from "@neondatabase/serverless";
+import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
 dotenv.config({ path: ".env" });
 
@@ -17,6 +18,7 @@ async function migrate() {
   console.log("🚀  Running migrations...");
 
   try {
+    // ── timetable ──────────────────────────────────────────────
     await sql`
       CREATE TABLE IF NOT EXISTS timetable (
         id SERIAL PRIMARY KEY,
@@ -29,24 +31,34 @@ async function migrate() {
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )
     `;
-
     console.log("✅  Table 'timetable' is ready.");
 
-    // // Seed sample data
-    // const existing = await sql`SELECT COUNT(*) FROM timetable`;
-    // if (parseInt(existing[0].count) === 0) {
-    //   console.log("🌱  Seeding sample data...");
-    //   const today = new Date().toISOString().slice(0, 10);
-    //   await sql`
-    //     INSERT INTO timetable (date, time_from, time_to, is_booking) VALUES
-    //       (${today}::date, '08:00', '09:00', false),
-    //       (${today}::date, '09:00', '10:00', true),
-    //       (${today}::date, '10:00', '11:00', false),
-    //       (${today}::date, '13:00', '14:00', true),
-    //       (${today}::date, '14:00', '15:00', false)
-    //   `;
-    //   console.log("✅  Sample data seeded.");
-    // }
+    // ── users ──────────────────────────────────────────────────
+    await sql`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
+    `;
+    console.log("✅  Table 'users' is ready.");
+
+    // ── Seed admin ─────────────────────────────────────────────
+    const existing = await sql`SELECT id FROM users WHERE username = 'admin'`;
+    if (existing.length === 0) {
+      const hash = await bcrypt.hash("admin123", 10);
+      await sql`
+        INSERT INTO users (username, password_hash)
+        VALUES ('admin', ${hash})
+      `;
+      console.log(
+        "🌱  Admin user seeded. (username: admin / password: admin123)",
+      );
+    } else {
+      console.log("ℹ️   Admin user already exists, skipping seed.");
+    }
 
     console.log("\n🎉  Migration complete!");
   } catch (err) {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 
 type Timetable = {
@@ -14,21 +15,16 @@ type Timetable = {
   updated_at: string;
 };
 
-type SlotTime = {
-  time_from: string;
-  time_to: string;
-};
+type SlotTime = { time_from: string; time_to: string };
 
 const today = format(new Date(), "yyyy-MM-dd");
 
 function formatTime(t: string) {
   return t?.slice(0, 5) ?? "";
 }
-
 function formatDate(d: string) {
   if (!d) return "";
-  const dateOnly = d.slice(0, 10);
-  const [y, m, day] = dateOnly.split("-");
+  const [y, m, day] = d.slice(0, 10).split("-");
   return `${day}/${m}/${y}`;
 }
 
@@ -36,6 +32,10 @@ const inputClass =
   "w-full bg-neutral-800 border border-neutral-700 text-neutral-100 px-3 py-2.5 rounded-lg text-sm outline-none focus:border-yellow-400 transition-colors [color-scheme:dark]";
 
 export default function TimetablePage() {
+  const router = useRouter();
+  const [username, setUsername] = useState<string>("");
+
+  // Timetable state (same as before)
   const [entries, setEntries] = useState<Timetable[]>([]);
   const [filterDate, setFilterDate] = useState(today);
   const [loading, setLoading] = useState(false);
@@ -55,10 +55,29 @@ export default function TimetablePage() {
   } | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
+  // Auth modals
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [cpCurrent, setCpCurrent] = useState("");
+  const [cpNew, setCpNew] = useState("");
+  const [cpConfirm, setCpConfirm] = useState("");
+  const [cpError, setCpError] = useState("");
+  const [cpLoading, setCpLoading] = useState(false);
+
   const showToast = (msg: string, type: "ok" | "err" = "ok") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
+
+  // Get current user from cookie/session (via a lightweight endpoint)
+  useEffect(() => {
+    fetch("/api/admin/me")
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.username) setUsername(j.username);
+      })
+      .catch(() => {});
+  }, []);
 
   const fetchEntries = useCallback(async () => {
     setLoading(true);
@@ -69,7 +88,6 @@ export default function TimetablePage() {
       const res = await fetch(url);
       const json = await res.json();
       if (json.success) setEntries(json.data);
-      console.log(json.data);
     } catch {
       showToast("Gagal memuat data", "err");
     } finally {
@@ -81,6 +99,53 @@ export default function TimetablePage() {
     fetchEntries();
   }, [fetchEntries]);
 
+  // --- Logout ---
+  const handleLogout = async () => {
+    await fetch("/api/admin/logout", { method: "POST" });
+    router.push("/admin/login");
+    router.refresh();
+  };
+
+  // --- Change Password ---
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCpError("");
+    if (cpNew !== cpConfirm) {
+      setCpError("Konfirmasi password tidak cocok");
+      return;
+    }
+    if (cpNew.length < 6) {
+      setCpError("Password baru minimal 6 karakter");
+      return;
+    }
+    setCpLoading(true);
+    try {
+      const res = await fetch("/api/admin/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: cpCurrent,
+          newPassword: cpNew,
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        showToast("Password berhasil diubah ✓");
+        setShowChangePassword(false);
+        setCpCurrent("");
+        setCpNew("");
+        setCpConfirm("");
+      } else {
+        setCpError(json.error ?? "Gagal mengubah password");
+      }
+    } catch {
+      setCpError("Terjadi kesalahan");
+    } finally {
+      setCpLoading(false);
+    }
+  };
+
+  // --- Slot helpers ---
   const addSlot = () => {
     const last = slots[slots.length - 1];
     const [h] = last.time_to.split(":").map(Number);
@@ -88,26 +153,22 @@ export default function TimetablePage() {
     const to = `${String(Math.min(h + 1, 23)).padStart(2, "0")}:${h >= 23 ? "59" : "00"}`;
     setSlots([...slots, { time_from: from, time_to: to }]);
   };
-
   const removeSlot = (i: number) => {
     if (slots.length > 1) setSlots(slots.filter((_, idx) => idx !== i));
   };
-
-  const updateSlot = (i: number, field: keyof SlotTime, value: string) => {
+  const updateSlot = (i: number, field: keyof SlotTime, value: string) =>
     setSlots(slots.map((s, idx) => (idx === i ? { ...s, [field]: value } : s)));
-  };
 
   const openCreate = () => {
     setFormDate(today);
     setSlots([{ time_from: "08:00", time_to: "09:00" }]);
     setIsBooking(false);
+    setBookingBy("");
     setEditId(null);
     setShowForm(true);
   };
-
   const openEdit = (entry: Timetable) => {
-    const dateOnly = entry.date.slice(0, 10);
-    setFormDate(dateOnly);
+    setFormDate(entry.date.slice(0, 10));
     setSlots([
       {
         time_from: formatTime(entry.time_from),
@@ -119,7 +180,6 @@ export default function TimetablePage() {
     setEditId(entry.id);
     setShowForm(true);
   };
-
   const closeForm = () => {
     setShowForm(false);
     setEditId(null);
@@ -180,9 +240,8 @@ export default function TimetablePage() {
           );
           closeForm();
           fetchEntries();
-        } else {
+        } else
           showToast(`${failed.length} dari ${slots.length} slot gagal`, "err");
-        }
       }
     } catch {
       showToast("Terjadi kesalahan", "err");
@@ -237,7 +296,6 @@ export default function TimetablePage() {
     { method: "PUT", path: "/api/timetable/:id", desc: "Update slot" },
     { method: "DELETE", path: "/api/timetable/:id", desc: "Hapus slot" },
   ];
-
   const methodColor: Record<string, string> = {
     GET: "text-green-400",
     POST: "text-yellow-400",
@@ -248,21 +306,43 @@ export default function TimetablePage() {
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-neutral-800 bg-neutral-950/95 backdrop-blur-md px-8 py-5 flex items-center justify-between">
+      <header className="sticky top-0 z-40 border-b border-neutral-800 bg-neutral-950/95 backdrop-blur-md px-6 py-4 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
-          <span className="font-mono text-[22px] font-bold text-yellow-400 tracking-tight">
+          <span className="font-mono text-[20px] font-bold text-yellow-400 tracking-tight">
             TIMETABLE
           </span>
           <span className="font-mono text-[11px] text-neutral-500 bg-neutral-800 px-2 py-0.5 rounded">
             /api/timetable
           </span>
         </div>
-        <button
-          onClick={openCreate}
-          className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-neutral-950 font-semibold text-sm px-5 py-2 rounded-md transition-colors"
-        >
-          <span className="text-base leading-none">+</span> Tambah Slot
-        </button>
+
+        {/* Right side: user info + actions */}
+        <div className="flex items-center gap-2">
+          {username && (
+            <span className="hidden sm:flex items-center gap-1.5 text-xs text-neutral-400 bg-neutral-800 border border-neutral-700 px-3 py-1.5 rounded-md">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+              {username}
+            </span>
+          )}
+          <button
+            onClick={() => setShowChangePassword(true)}
+            className="text-neutral-400 hover:text-neutral-100 bg-neutral-800 border border-neutral-700 hover:border-yellow-400 px-3 py-1.5 rounded-md text-xs transition-all"
+          >
+            Ganti Password
+          </button>
+          <button
+            onClick={() => setShowLogoutConfirm(true)}
+            className="text-neutral-400 hover:text-red-400 bg-neutral-800 border border-neutral-700 hover:border-red-400 px-3 py-1.5 rounded-md text-xs transition-all"
+          >
+            Logout
+          </button>
+          <button
+            onClick={openCreate}
+            className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-neutral-950 font-semibold text-sm px-4 py-2 rounded-md transition-colors"
+          >
+            <span className="text-base leading-none">+</span> Tambah Slot
+          </button>
+        </div>
       </header>
 
       <main className="max-w-4xl mx-auto px-6 py-8">
@@ -306,8 +386,7 @@ export default function TimetablePage() {
 
         {/* Table */}
         <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">
-          {/* Table header */}
-          <div className="font-mono grid grid-cols-[1fr_90px_90px_100px_1fr_110px] px-5 py-3 ...">
+          <div className="font-mono grid grid-cols-[1fr_90px_90px_100px_1fr_110px] px-5 py-3 border-b border-neutral-800 text-[11px] text-neutral-500 uppercase tracking-widest">
             <div>Tanggal</div>
             <div>Mulai</div>
             <div>Selesai</div>
@@ -316,7 +395,6 @@ export default function TimetablePage() {
             <div className="text-right">Aksi</div>
           </div>
 
-          {/* Rows */}
           {loading ? (
             <div className="py-12 text-center text-neutral-500 text-sm">
               Memuat data...
@@ -337,12 +415,11 @@ export default function TimetablePage() {
               </button>
             </div>
           ) : (
-            entries.map((entry, i) => (
+            entries.map((entry) => (
               <div
                 key={entry.id}
-                className={`grid grid-cols-[1fr_90px_90px_100px_1fr_110px] px-5 py-3.5 ...`}
+                className="grid grid-cols-[1fr_90px_90px_100px_1fr_110px] px-5 py-3.5 border-b border-neutral-800/60 hover:bg-neutral-800/30 transition-colors items-center"
               >
-                {/* Date */}
                 <div className="flex items-center gap-2.5">
                   <div
                     className={`w-0.5 h-8 rounded-full flex-shrink-0 ${entry.is_booking ? "bg-red-400" : "bg-green-400"}`}
@@ -356,33 +433,20 @@ export default function TimetablePage() {
                     </div>
                   </div>
                 </div>
-
-                {/* Time from */}
                 <div className="font-mono text-[15px] text-yellow-400">
                   {formatTime(entry.time_from)}
                 </div>
-
-                {/* Time to */}
                 <div className="font-mono text-[15px] text-neutral-500">
                   {formatTime(entry.time_to)}
                 </div>
-
-                {/* Status toggle */}
                 <div>
                   <button
                     onClick={() => toggleBooking(entry)}
-                    title="Klik untuk toggle status"
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-semibold tracking-wide border transition-all cursor-pointer ${
-                      entry.is_booking
-                        ? "bg-red-400/10 text-red-400 border-red-400/30 hover:bg-red-400/20"
-                        : "bg-green-400/10 text-green-400 border-green-400/30 hover:bg-green-400/20"
-                    }`}
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-semibold tracking-wide border transition-all cursor-pointer ${entry.is_booking ? "bg-red-400/10 text-red-400 border-red-400/30 hover:bg-red-400/20" : "bg-green-400/10 text-green-400 border-green-400/30 hover:bg-green-400/20"}`}
                   >
                     {entry.is_booking ? "BOOKED" : "OPEN"}
                   </button>
                 </div>
-
-                {/* Booking By */}
                 <div className="text-sm text-neutral-300 truncate pr-2">
                   {entry.booking_by ? (
                     <span className="flex items-center gap-1.5">
@@ -393,8 +457,6 @@ export default function TimetablePage() {
                     <span className="text-neutral-600 text-xs italic">—</span>
                   )}
                 </div>
-
-                {/* Actions */}
                 <div className="flex gap-1.5 justify-end">
                   <button
                     onClick={() => openEdit(entry)}
@@ -438,14 +500,13 @@ export default function TimetablePage() {
         </div>
       </main>
 
-      {/* Form Modal */}
+      {/* ── FORM MODAL ── */}
       {showForm && (
         <div
           className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center"
           onClick={(e) => e.target === e.currentTarget && closeForm()}
         >
           <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-7 w-full max-w-[440px] mx-4 max-h-[90vh] overflow-y-auto">
-            {/* Modal header */}
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h2 className="font-mono text-lg font-bold">
@@ -459,14 +520,12 @@ export default function TimetablePage() {
               </div>
               <button
                 onClick={closeForm}
-                className="bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-100 w-8 h-8 rounded-md flex items-center justify-center text-base transition-colors flex-shrink-0"
+                className="bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-100 w-8 h-8 rounded-md flex items-center justify-center text-base transition-colors"
               >
                 ×
               </button>
             </div>
-
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              {/* Tanggal */}
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs text-neutral-400 font-medium">
                   Tanggal
@@ -479,8 +538,6 @@ export default function TimetablePage() {
                   className={inputClass}
                 />
               </label>
-
-              {/* Slot rows */}
               <div>
                 <div className="grid grid-cols-[1fr_1fr_32px] gap-2 mb-2">
                   <span className="text-xs text-neutral-400 font-medium">
@@ -491,7 +548,6 @@ export default function TimetablePage() {
                   </span>
                   <span />
                 </div>
-
                 {slots.map((slot, i) => (
                   <div
                     key={i}
@@ -517,18 +573,12 @@ export default function TimetablePage() {
                       type="button"
                       onClick={() => removeSlot(i)}
                       disabled={slots.length === 1}
-                      title="Hapus baris ini"
-                      className={`w-8 h-[42px] rounded-md border border-neutral-700 bg-neutral-800 text-neutral-400 flex items-center justify-center text-base transition-all flex-shrink-0 ${
-                        slots.length === 1
-                          ? "opacity-30 cursor-not-allowed"
-                          : "cursor-pointer hover:text-red-400 hover:border-red-400"
-                      }`}
+                      className={`w-8 h-[42px] rounded-md border border-neutral-700 bg-neutral-800 text-neutral-400 flex items-center justify-center text-base transition-all flex-shrink-0 ${slots.length === 1 ? "opacity-30 cursor-not-allowed" : "cursor-pointer hover:text-red-400 hover:border-red-400"}`}
                     >
                       ×
                     </button>
                   </div>
                 ))}
-
                 {!editId && (
                   <button
                     type="button"
@@ -539,43 +589,36 @@ export default function TimetablePage() {
                   </button>
                 )}
               </div>
-
-              {/* is_booking */}
               {editId && (
-                <label className="flex items-center gap-2.5 cursor-pointer bg-neutral-800 border border-neutral-700 rounded-lg px-3.5 py-3">
-                  <input
-                    type="checkbox"
-                    checked={isBooking}
-                    onChange={(e) => setIsBooking(e.target.checked)}
-                    className="w-4 h-4 cursor-pointer accent-yellow-400"
-                  />
-                  <div>
-                    <div className="text-sm font-medium">Is Booking</div>
-                    <div className="text-[11px] text-neutral-500">
-                      Tandai slot ini sudah dipesan
+                <>
+                  <label className="flex items-center gap-2.5 cursor-pointer bg-neutral-800 border border-neutral-700 rounded-lg px-3.5 py-3">
+                    <input
+                      type="checkbox"
+                      checked={isBooking}
+                      onChange={(e) => setIsBooking(e.target.checked)}
+                      className="w-4 h-4 cursor-pointer accent-yellow-400"
+                    />
+                    <div>
+                      <div className="text-sm font-medium">Is Booking</div>
+                      <div className="text-[11px] text-neutral-500">
+                        Tandai slot ini sudah dipesan
+                      </div>
                     </div>
-                  </div>
-                </label>
+                  </label>
+                  <label className="flex flex-col gap-2 bg-neutral-800 border border-neutral-700 rounded-lg px-3.5 py-3">
+                    <span className="text-sm font-medium text-white">
+                      Booking By
+                    </span>
+                    <input
+                      type="text"
+                      value={bookingBy ?? ""}
+                      onChange={(e) => setBookingBy(e.target.value)}
+                      placeholder="Di booking oleh"
+                      className="w-full rounded-md border border-neutral-600 bg-neutral-900 px-3 py-2 text-sm text-white placeholder:text-neutral-500 outline-none transition focus:border-yellow-400"
+                    />
+                  </label>
+                </>
               )}
-
-              {/* booking_by */}
-              {editId && (
-                <label className="flex flex-col gap-2 bg-neutral-800 border border-neutral-700 rounded-lg px-3.5 py-3">
-                  <span className="text-sm font-medium text-white">
-                    Booking By
-                  </span>
-
-                  <input
-                    type="text"
-                    value={bookingBy ?? ""}
-                    onChange={(e) => setBookingBy(e.target.value)}
-                    placeholder="Di booking oleh"
-                    className="w-full rounded-md border border-neutral-600 bg-neutral-900 px-3 py-2 text-sm text-white placeholder:text-neutral-500 outline-none transition focus:border-yellow-400 focus:ring-2 focus:ring-yellow-400/20"
-                  />
-                </label>
-              )}
-
-              {/* Buttons */}
               <div className="flex gap-2.5 pt-1">
                 <button
                   type="button"
@@ -600,7 +643,7 @@ export default function TimetablePage() {
         </div>
       )}
 
-      {/* Delete Confirm */}
+      {/* ── DELETE CONFIRM ── */}
       {deleteId && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center">
           <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-7 w-full max-w-sm mx-4 text-center">
@@ -629,14 +672,126 @@ export default function TimetablePage() {
         </div>
       )}
 
+      {/* ── LOGOUT CONFIRM ── */}
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-7 w-full max-w-sm mx-4 text-center">
+            <div className="text-3xl mb-3">👋</div>
+            <h3 className="text-base font-semibold mb-2">
+              Keluar dari Panel Admin?
+            </h3>
+            <p className="text-neutral-500 text-sm mb-6">
+              Sesi Anda akan diakhiri.
+            </p>
+            <div className="flex gap-2.5">
+              <button
+                onClick={() => setShowLogoutConfirm(false)}
+                className="flex-1 bg-neutral-800 border border-neutral-700 text-neutral-100 py-2.5 rounded-lg text-sm hover:bg-neutral-700 transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleLogout}
+                className="flex-1 bg-red-500 hover:bg-red-400 text-white py-2.5 rounded-lg text-sm font-bold transition-colors"
+              >
+                Ya, Logout
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CHANGE PASSWORD ── */}
+      {showChangePassword && (
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center"
+          onClick={(e) =>
+            e.target === e.currentTarget && setShowChangePassword(false)
+          }
+        >
+          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-7 w-full max-w-[400px] mx-4">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="font-mono text-base font-bold">Ganti Password</h2>
+              <button
+                onClick={() => setShowChangePassword(false)}
+                className="bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-100 w-8 h-8 rounded-md flex items-center justify-center text-base transition-colors"
+              >
+                ×
+              </button>
+            </div>
+            <form
+              onSubmit={handleChangePassword}
+              className="flex flex-col gap-4"
+            >
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-neutral-400 font-medium">
+                  Password Saat Ini
+                </span>
+                <input
+                  type="password"
+                  required
+                  value={cpCurrent}
+                  onChange={(e) => setCpCurrent(e.target.value)}
+                  className={inputClass}
+                  placeholder="••••••••"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-neutral-400 font-medium">
+                  Password Baru
+                </span>
+                <input
+                  type="password"
+                  required
+                  value={cpNew}
+                  onChange={(e) => setCpNew(e.target.value)}
+                  className={inputClass}
+                  placeholder="Min. 6 karakter"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-neutral-400 font-medium">
+                  Konfirmasi Password Baru
+                </span>
+                <input
+                  type="password"
+                  required
+                  value={cpConfirm}
+                  onChange={(e) => setCpConfirm(e.target.value)}
+                  className={inputClass}
+                  placeholder="Ulangi password baru"
+                />
+              </label>
+              {cpError && (
+                <div className="bg-red-950 border border-red-400/30 text-red-400 text-xs px-3.5 py-2.5 rounded-lg">
+                  {cpError}
+                </div>
+              )}
+              <div className="flex gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowChangePassword(false)}
+                  className="flex-1 bg-neutral-800 border border-neutral-700 text-neutral-100 py-2.5 rounded-lg text-sm font-medium hover:bg-neutral-700 transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={cpLoading}
+                  className="flex-[2] bg-yellow-400 hover:bg-yellow-300 text-neutral-950 py-2.5 rounded-lg text-sm font-bold transition-colors disabled:opacity-60"
+                >
+                  {cpLoading ? "Menyimpan..." : "Simpan Password"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Toast */}
       {toast && (
         <div
-          className={`fixed bottom-6 right-6 z-[100] px-4 py-3 rounded-lg text-sm font-medium shadow-xl border transition-all ${
-            toast.type === "ok"
-              ? "bg-neutral-900 border-green-400/50 text-green-400"
-              : "bg-red-950 border-red-400/50 text-red-400"
-          }`}
+          className={`fixed bottom-6 right-6 z-[100] px-4 py-3 rounded-lg text-sm font-medium shadow-xl border transition-all ${toast.type === "ok" ? "bg-neutral-900 border-green-400/50 text-green-400" : "bg-red-950 border-red-400/50 text-red-400"}`}
         >
           {toast.msg}
         </div>

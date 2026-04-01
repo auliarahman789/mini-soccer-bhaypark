@@ -270,7 +270,12 @@ export default function Page() {
           <div className="font-oswald text-2xl font-bold text-[#F0CC6E] tracking-wide uppercase leading-tight">
             Bhaypark Mini Soccer
           </div>
-          <Link href="/admin">Ke Halaman Admin</Link>
+          <Link
+            href="/admin/login"
+            className="inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-[1px] uppercase px-3 py-1 rounded border border-[rgba(201,168,76,0.35)] text-[#C9A84C] hover:bg-[rgba(201,168,76,0.1)] transition-colors mt-1"
+          >
+            🔒 Admin Login
+          </Link>
         </div>
 
         {/* CONTENT WRAPPER */}
