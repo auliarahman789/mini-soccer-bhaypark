@@ -306,7 +306,7 @@ export default function Page() {
           >
             Bhaypark Mini Soccer
           </div>
-          <Link
+          {/* <Link
             href="/admin/login"
             style={{
               display: "inline-flex",
@@ -326,7 +326,7 @@ export default function Page() {
             }}
           >
             🔒 Admin Login
-          </Link>
+          </Link> */}
         </div>
 
         {/* CONTENT */}
