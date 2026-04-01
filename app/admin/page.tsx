@@ -11,6 +11,7 @@ type Timetable = {
   time_to: string;
   is_booking: boolean;
   booking_by: string;
+  phone_number: string;
   created_at: string;
   updated_at: string;
 };
@@ -146,8 +147,17 @@ export default function TimetablePage() {
   ]);
   const [isBooking, setIsBooking] = useState(false);
   const [bookingBy, setBookingBy] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
   const [editId, setEditId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
+
+  // ── MOVE SCHEDULE STATE ──────────────────────────────────────────────────
+  const [showMovePanel, setShowMovePanel] = useState(false);
+  const [moveTargetDate, setMoveTargetDate] = useState("");
+  const [moveTargetSlots, setMoveTargetSlots] = useState<Timetable[]>([]);
+  const [moveTargetLoading, setMoveTargetLoading] = useState(false);
+  const [moveTargetId, setMoveTargetId] = useState<number | null>(null);
+  const [moveLoading, setMoveLoading] = useState(false);
 
   const [toast, setToast] = useState<{
     msg: string;
@@ -239,6 +249,96 @@ export default function TimetablePage() {
   useEffect(() => {
     fetchEntries();
   }, [fetchEntries]);
+
+  // ── Fetch slots for move target date ──────────────────────────────────────
+  const fetchMoveTargetSlots = useCallback(async (date: string) => {
+    if (!date) {
+      setMoveTargetSlots([]);
+      return;
+    }
+    setMoveTargetLoading(true);
+    try {
+      const res = await fetch(`/api/timetable?date=${date}`);
+      const json = await res.json();
+      if (json.success) {
+        const available = (json.data as Timetable[])
+          .filter((s) => !s.is_booking)
+          .sort((a, b) => a.time_from.localeCompare(b.time_from));
+        setMoveTargetSlots(available);
+      } else setMoveTargetSlots([]);
+    } catch {
+      setMoveTargetSlots([]);
+    } finally {
+      setMoveTargetLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (showMovePanel && moveTargetDate) fetchMoveTargetSlots(moveTargetDate);
+  }, [showMovePanel, moveTargetDate, fetchMoveTargetSlots]);
+
+  // ── Execute move ──────────────────────────────────────────────────────────
+  const handleMoveSchedule = async () => {
+    if (!editId || !moveTargetId) return;
+    setMoveLoading(true);
+    try {
+      // Find the source entry to get booking info
+      const srcEntry = [...entries].find((e) => e.id === editId);
+      if (!srcEntry) {
+        showToast("Data sumber tidak ditemukan", "err");
+        return;
+      }
+
+      // 1. Update target slot: fill with booking data from source
+      const resTarget = await fetch(`/api/timetable/${moveTargetId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          is_booking: true,
+          booking_by: srcEntry.booking_by ?? "",
+          phone_number: srcEntry.phone_number ?? "",
+        }),
+      });
+      const jsonTarget = await resTarget.json();
+      if (!jsonTarget.success) {
+        showToast(
+          jsonTarget.error || "Gagal memindahkan ke slot tujuan",
+          "err",
+        );
+        return;
+      }
+
+      // 2. Clear source slot: reset booking data
+      const resSrc = await fetch(`/api/timetable/${editId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          is_booking: false,
+          booking_by: "",
+          phone_number: "",
+        }),
+      });
+      const jsonSrc = await resSrc.json();
+      if (!jsonSrc.success) {
+        showToast(jsonSrc.error || "Gagal mengosongkan slot asal", "err");
+        return;
+      }
+
+      showToast("Jadwal berhasil dipindahkan ✓");
+      setShowForm(false);
+      setEditId(null);
+      setShowMovePanel(false);
+      setMoveTargetDate("");
+      setMoveTargetSlots([]);
+      setMoveTargetId(null);
+      fetchEntries();
+      fetchMonthSummary();
+    } catch {
+      showToast("Terjadi kesalahan", "err");
+    } finally {
+      setMoveLoading(false);
+    }
+  };
 
   const firstDay = new Date(currentYear, currentMonth, 1).getDay();
   const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
@@ -344,9 +444,14 @@ export default function TimetablePage() {
     setSlots([{ time_from: "08:00", time_to: "09:00" }]);
     setIsBooking(false);
     setBookingBy("");
+    setPhoneNumber("");
     setEditId(null);
     setShowForm(true);
     setShowSettingsMenu(false);
+    setShowMovePanel(false);
+    setMoveTargetDate("");
+    setMoveTargetSlots([]);
+    setMoveTargetId(null);
   };
   const openEdit = (entry: Timetable) => {
     setFormDate(entry.date.slice(0, 10));
@@ -358,12 +463,21 @@ export default function TimetablePage() {
     ]);
     setIsBooking(entry.is_booking);
     setBookingBy(entry.booking_by);
+    setPhoneNumber(entry.phone_number);
     setEditId(entry.id);
     setShowForm(true);
+    setShowMovePanel(false);
+    setMoveTargetDate("");
+    setMoveTargetSlots([]);
+    setMoveTargetId(null);
   };
   const closeForm = () => {
     setShowForm(false);
     setEditId(null);
+    setShowMovePanel(false);
+    setMoveTargetDate("");
+    setMoveTargetSlots([]);
+    setMoveTargetId(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -388,6 +502,7 @@ export default function TimetablePage() {
             time_to: slots[0].time_to,
             is_booking: isBooking,
             booking_by: bookingBy,
+            phone_number: phoneNumber,
           }),
         });
         const json = await res.json();
@@ -409,6 +524,7 @@ export default function TimetablePage() {
                 time_to: slot.time_to,
                 is_booking: isBooking,
                 booking_by: bookingBy,
+                phone_number: phoneNumber,
               }),
             }).then((r) => r.json()),
           ),
@@ -481,7 +597,6 @@ export default function TimetablePage() {
           @keyframes spin{to{transform:rotate(360deg)}}
         `}</style>
         <div style={{ minHeight: "100vh", background: "#0A0A0A" }}>
-          {/* Skeleton header */}
           <div
             style={{
               borderBottom: "1px solid rgba(201,168,76,0.14)",
@@ -545,7 +660,6 @@ export default function TimetablePage() {
               />
             </div>
           </div>
-          {/* Skeleton body */}
           <div
             style={{
               padding: "18px 14px",
@@ -592,7 +706,6 @@ export default function TimetablePage() {
               />
             </div>
           </div>
-          {/* Loading indicator bottom-right */}
           <div
             style={{
               position: "fixed",
@@ -646,6 +759,7 @@ export default function TimetablePage() {
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
         @keyframes slideUp{from{transform:translateY(14px);opacity:0}to{transform:translateY(0);opacity:1}}
         @keyframes slideDown{from{transform:translateY(-8px);opacity:0}to{transform:translateY(0);opacity:1}}
+        @keyframes expandDown{from{max-height:0;opacity:0}to{max-height:600px;opacity:1}}
 
         .admin-input{width:100%;background:#1a1a1a;border:1px solid rgba(255,255,255,0.08);color:#EAEAEA;padding:10px 12px;border-radius:8px;font-size:13px;font-family:'Mulish',sans-serif;outline:none;color-scheme:dark;transition:border-color 0.2s}
         .admin-input:focus{border-color:#C9A84C}
@@ -660,6 +774,10 @@ export default function TimetablePage() {
         .btn-ds{background:rgba(204,34,34,0.09);border:1px solid rgba(204,34,34,0.2);color:#E57373;border-radius:7px;font-size:10px;font-family:'Mulish',sans-serif;font-weight:600;cursor:pointer;transition:all 0.2s;padding:5px 9px}
         .btn-ds:hover{background:rgba(204,34,34,0.18);border-color:rgba(204,34,34,0.45)}
 
+        .btn-move{background:rgba(99,179,237,0.09);border:1px solid rgba(99,179,237,0.22);color:#63B3ED;border-radius:8px;font-family:'Oswald',sans-serif;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;cursor:pointer;transition:all 0.2s;white-space:nowrap;padding:8px 14px;display:flex;align-items:center;gap:6px}
+        .btn-move:hover{background:rgba(99,179,237,0.16);border-color:rgba(99,179,237,0.45)}
+        .btn-move:disabled{opacity:0.4;cursor:not-allowed}
+
         .cal-day{aspect-ratio:1;border-radius:7px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;transition:all 0.12s;border:1px solid transparent;position:relative}
         .cal-day:hover{transform:scale(1.09);z-index:2}
 
@@ -670,11 +788,16 @@ export default function TimetablePage() {
         .settings-menu{position:absolute;top:calc(100% + 7px);right:0;background:#161616;border:1px solid rgba(201,168,76,0.28);border-radius:12px;padding:8px;min-width:190px;box-shadow:0 16px 40px rgba(0,0,0,0.55);z-index:60;animation:slideDown 0.17s ease}
         .smenu-btn{width:100%;padding:8px 10px;background:transparent;border:none;font-size:12px;font-family:'Mulish',sans-serif;font-weight:600;cursor:pointer;text-align:left;border-radius:7px;transition:background 0.15s}
 
+        .move-panel{overflow:hidden;animation:expandDown 0.25s ease forwards}
+        .slot-option{padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);cursor:pointer;transition:all 0.15s;display:flex;align-items:center;gap:10px;margin-bottom:6px}
+        .slot-option:hover{border-color:rgba(99,179,237,0.35);background:rgba(99,179,237,0.06)}
+        .slot-option.selected{border-color:#63B3ED;background:rgba(99,179,237,0.12);box-shadow:0 0 0 1px #63B3ED}
+
         @media(max-width:639px){.grid-layout{grid-template-columns:1fr !important}}
       `}</style>
 
       <div style={{ minHeight: "100vh", background: "#0A0A0A" }}>
-        {/* ── HEADER ────────────────────────────────────────────────────────── */}
+        {/* ── HEADER ── */}
         <header
           style={{
             position: "sticky",
@@ -694,7 +817,6 @@ export default function TimetablePage() {
               gap: "8px",
             }}
           >
-            {/* Logo */}
             <div
               style={{
                 display: "flex",
@@ -745,8 +867,6 @@ export default function TimetablePage() {
                 </div>
               </div>
             </div>
-
-            {/* Right actions — always a flat row, no hamburger */}
             <div
               style={{
                 display: "flex",
@@ -755,7 +875,6 @@ export default function TimetablePage() {
                 flexShrink: 0,
               }}
             >
-              {/* Gear settings button + popover */}
               <div style={{ position: "relative" }}>
                 <button
                   onClick={() => setShowSettingsMenu((v) => !v)}
@@ -777,7 +896,6 @@ export default function TimetablePage() {
                 >
                   ⚙
                 </button>
-
                 {showSettingsMenu && (
                   <>
                     <div
@@ -866,8 +984,6 @@ export default function TimetablePage() {
                   </>
                 )}
               </div>
-
-              {/* Tambah Slot — always visible */}
               <button
                 className="btn-gold"
                 onClick={openCreate}
@@ -879,7 +995,7 @@ export default function TimetablePage() {
           </div>
         </header>
 
-        {/* ── MAIN ──────────────────────────────────────────────────────────── */}
+        {/* ── MAIN ── */}
         <main
           style={{
             maxWidth: "960px",
@@ -887,7 +1003,7 @@ export default function TimetablePage() {
             padding: "16px 14px 60px",
           }}
         >
-          {/* Stats row */}
+          {/* Stats */}
           <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
             {[
               { label: "Total", value: entries.length, color: "#F0CC6E" },
@@ -955,7 +1071,6 @@ export default function TimetablePage() {
                   overflow: "hidden",
                 }}
               >
-                {/* Nav */}
                 <div
                   style={{
                     display: "flex",
@@ -1023,8 +1138,6 @@ export default function TimetablePage() {
                     ›
                   </button>
                 </div>
-
-                {/* Day names */}
                 <div
                   style={{
                     display: "grid",
@@ -1048,8 +1161,6 @@ export default function TimetablePage() {
                     </div>
                   ))}
                 </div>
-
-                {/* Day grid */}
                 <div
                   style={{
                     display: "grid",
@@ -1148,8 +1259,6 @@ export default function TimetablePage() {
                     );
                   })}
                 </div>
-
-                {/* Legend */}
                 <div
                   style={{
                     display: "flex",
@@ -1202,7 +1311,6 @@ export default function TimetablePage() {
                   ? `Slot — ${formatDateLabel(currentYear, currentMonth, selectedDay)}`
                   : "Detail Jadwal"}
               </SectionTitle>
-
               {!selectedDay ? (
                 <div
                   style={{
@@ -1236,7 +1344,6 @@ export default function TimetablePage() {
                     overflow: "hidden",
                   }}
                 >
-                  {/* List header */}
                   <div
                     style={{
                       display: "flex",
@@ -1299,8 +1406,6 @@ export default function TimetablePage() {
                       + Slot
                     </button>
                   </div>
-
-                  {/* Rows */}
                   <div style={{ padding: "9px 9px 3px" }}>
                     {loading ? (
                       [1, 2, 3].map((i) => (
@@ -1463,6 +1568,17 @@ export default function TimetablePage() {
                                 {entry.booking_by}
                               </div>
                             )}
+                            {entry.phone_number && (
+                              <div
+                                style={{
+                                  fontSize: "9px",
+                                  color: "#777",
+                                  marginTop: "2px",
+                                }}
+                              >
+                                {entry.phone_number}
+                              </div>
+                            )}
                           </div>
                           <div
                             style={{
@@ -1520,13 +1636,13 @@ export default function TimetablePage() {
         </div>
       </div>
 
-      {/* ── FORM MODAL ────────────────────────────────────────────────────── */}
+      {/* ── FORM MODAL ── */}
       {showForm && (
         <div
           className="modal-backdrop"
           onClick={(e) => e.target === e.currentTarget && closeForm()}
         >
-          <div className="modal-card" style={{ maxWidth: "420px" }}>
+          <div className="modal-card" style={{ maxWidth: "440px" }}>
             <div className="modal-hd">
               <div>
                 <div
@@ -1568,6 +1684,7 @@ export default function TimetablePage() {
                 ×
               </button>
             </div>
+
             <form
               onSubmit={handleSubmit}
               style={{
@@ -1599,6 +1716,7 @@ export default function TimetablePage() {
                   className="admin-input"
                 />
               </label>
+
               <div>
                 <div
                   style={{
@@ -1702,6 +1820,7 @@ export default function TimetablePage() {
                   </button>
                 )}
               </div>
+
               {editId && (
                 <>
                   <label
@@ -1768,8 +1887,313 @@ export default function TimetablePage() {
                       className="admin-input"
                     />
                   </label>
+                  <label
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "5px",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "10px",
+                        color: "#777",
+                        fontWeight: 600,
+                        letterSpacing: "0.5px",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      Phone Number
+                    </span>
+                    <input
+                      type="text"
+                      value={phoneNumber ?? ""}
+                      onChange={(e) => setPhoneNumber(e.target.value)}
+                      placeholder="Nomor Telepon"
+                      className="admin-input"
+                    />
+                  </label>
+
+                  {/* ── MOVE SCHEDULE SECTION ─────────────────────────────── */}
+                  <div
+                    style={{
+                      borderTop: "1px solid rgba(255,255,255,0.06)",
+                      paddingTop: "12px",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="btn-move"
+                      style={{ width: "100%", justifyContent: "center" }}
+                      onClick={() => {
+                        setShowMovePanel((v) => !v);
+                        if (!showMovePanel) {
+                          setMoveTargetDate("");
+                          setMoveTargetSlots([]);
+                          setMoveTargetId(null);
+                        }
+                      }}
+                    >
+                      <span style={{ fontSize: "13px" }}>↗</span>
+                      {showMovePanel ? "Batal Pindah Jadwal" : "Pindah Jadwal"}
+                    </button>
+
+                    {showMovePanel && (
+                      <div
+                        className="move-panel"
+                        style={{
+                          marginTop: "12px",
+                          background: "rgba(99,179,237,0.04)",
+                          border: "1px solid rgba(99,179,237,0.18)",
+                          borderRadius: "12px",
+                          padding: "14px",
+                        }}
+                      >
+                        {/* Header info */}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            marginBottom: "12px",
+                          }}
+                        >
+                          <span style={{ fontSize: "11px" }}>📌</span>
+                          <div>
+                            <div
+                              style={{
+                                fontSize: "10px",
+                                color: "#63B3ED",
+                                fontWeight: 700,
+                                letterSpacing: "0.5px",
+                                textTransform: "uppercase",
+                              }}
+                            >
+                              Pindahkan Booking Ini
+                            </div>
+                            <div
+                              style={{
+                                fontSize: "10px",
+                                color: "#555",
+                                marginTop: "1px",
+                              }}
+                            >
+                              Data{" "}
+                              {bookingBy ? (
+                                <span style={{ color: "#EAEAEA" }}>
+                                  {bookingBy}
+                                </span>
+                              ) : (
+                                "booking"
+                              )}{" "}
+                              akan dipindah ke slot yang dipilih. Slot asal akan
+                              dikosongkan.
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Target date picker */}
+                        <label
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "5px",
+                            marginBottom: "10px",
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: "10px",
+                              color: "#777",
+                              fontWeight: 600,
+                              letterSpacing: "0.5px",
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            Tanggal Tujuan
+                          </span>
+                          <input
+                            type="date"
+                            value={moveTargetDate}
+                            onChange={(e) => {
+                              setMoveTargetDate(e.target.value);
+                              setMoveTargetId(null);
+                              setMoveTargetSlots([]);
+                            }}
+                            className="admin-input"
+                            style={{ borderColor: "rgba(99,179,237,0.3)" }}
+                          />
+                        </label>
+
+                        {/* Available slots for target date */}
+                        {moveTargetDate && (
+                          <div>
+                            <div
+                              style={{
+                                fontSize: "10px",
+                                color: "#777",
+                                fontWeight: 600,
+                                letterSpacing: "0.5px",
+                                textTransform: "uppercase",
+                                marginBottom: "7px",
+                              }}
+                            >
+                              Slot Tersedia di {moveTargetDate}
+                            </div>
+
+                            {moveTargetLoading ? (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: "6px",
+                                }}
+                              >
+                                {[1, 2].map((i) => (
+                                  <div
+                                    key={i}
+                                    style={{
+                                      height: "46px",
+                                      borderRadius: "8px",
+                                      background: "rgba(99,179,237,0.05)",
+                                      animation: "pulse 1.6s infinite",
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            ) : moveTargetSlots.length === 0 ? (
+                              <div
+                                style={{
+                                  padding: "16px",
+                                  textAlign: "center",
+                                  background: "rgba(255,255,255,0.02)",
+                                  borderRadius: "8px",
+                                  border: "1px dashed rgba(255,255,255,0.06)",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    fontSize: "18px",
+                                    opacity: 0.3,
+                                    marginBottom: "5px",
+                                  }}
+                                >
+                                  📭
+                                </div>
+                                <div
+                                  style={{ fontSize: "11px", color: "#555" }}
+                                >
+                                  Tidak ada slot tersedia di tanggal ini
+                                </div>
+                              </div>
+                            ) : (
+                              <div>
+                                {moveTargetSlots.map((slot) => (
+                                  <div
+                                    key={slot.id}
+                                    className={`slot-option${moveTargetId === slot.id ? " selected" : ""}`}
+                                    onClick={() => setMoveTargetId(slot.id)}
+                                  >
+                                    <div
+                                      style={{
+                                        width: "8px",
+                                        height: "8px",
+                                        borderRadius: "50%",
+                                        border: `2px solid ${moveTargetId === slot.id ? "#63B3ED" : "rgba(255,255,255,0.2)"}`,
+                                        background:
+                                          moveTargetId === slot.id
+                                            ? "#63B3ED"
+                                            : "transparent",
+                                        flexShrink: 0,
+                                        transition: "all 0.15s",
+                                      }}
+                                    />
+                                    <div style={{ flex: 1 }}>
+                                      <div
+                                        style={{
+                                          fontFamily: "Oswald, sans-serif",
+                                          fontSize: "13px",
+                                          color: "#F0CC6E",
+                                          fontWeight: 600,
+                                        }}
+                                      >
+                                        {formatTime(slot.time_from)} –{" "}
+                                        {formatTime(slot.time_to)}
+                                      </div>
+                                      <div
+                                        style={{
+                                          fontSize: "9px",
+                                          color: "#555",
+                                          marginTop: "1px",
+                                        }}
+                                      >
+                                        ID #{slot.id} · OPEN
+                                      </div>
+                                    </div>
+                                    {moveTargetId === slot.id && (
+                                      <span
+                                        style={{
+                                          fontSize: "11px",
+                                          color: "#63B3ED",
+                                          fontWeight: 700,
+                                        }}
+                                      >
+                                        ✓ Dipilih
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Confirm move button */}
+                        {moveTargetId && (
+                          <button
+                            type="button"
+                            disabled={moveLoading}
+                            onClick={handleMoveSchedule}
+                            style={{
+                              width: "100%",
+                              marginTop: "12px",
+                              padding: "10px",
+                              background:
+                                "linear-gradient(135deg,#2B6CB0,#4299E1)",
+                              border: "none",
+                              color: "#fff",
+                              borderRadius: "8px",
+                              fontSize: "12px",
+                              fontWeight: 700,
+                              cursor: moveLoading ? "not-allowed" : "pointer",
+                              fontFamily: "Oswald, sans-serif",
+                              letterSpacing: "1px",
+                              textTransform: "uppercase",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: "8px",
+                              opacity: moveLoading ? 0.7 : 1,
+                              transition: "opacity 0.2s",
+                            }}
+                          >
+                            {moveLoading ? (
+                              <>
+                                <Spinner size={12} color="#fff" />{" "}
+                                Memindahkan...
+                              </>
+                            ) : (
+                              "↗ Konfirmasi Pindah Jadwal"
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {/* ── END MOVE SECTION ── */}
                 </>
               )}
+
               <div style={{ display: "flex", gap: "8px", paddingTop: "3px" }}>
                 <button
                   type="button"
@@ -1805,7 +2229,7 @@ export default function TimetablePage() {
         </div>
       )}
 
-      {/* ── DELETE CONFIRM ──────────────────────────────────────────────────── */}
+      {/* ── DELETE CONFIRM ── */}
       {deleteId && (
         <div className="modal-backdrop">
           <div
@@ -1879,7 +2303,7 @@ export default function TimetablePage() {
         </div>
       )}
 
-      {/* ── LOGOUT CONFIRM ──────────────────────────────────────────────────── */}
+      {/* ── LOGOUT CONFIRM ── */}
       {showLogoutConfirm && (
         <div className="modal-backdrop">
           <div
@@ -1952,7 +2376,7 @@ export default function TimetablePage() {
         </div>
       )}
 
-      {/* ── CHANGE PASSWORD ─────────────────────────────────────────────────── */}
+      {/* ── CHANGE PASSWORD ── */}
       {showChangePassword && (
         <div
           className="modal-backdrop"
@@ -2106,7 +2530,7 @@ export default function TimetablePage() {
         </div>
       )}
 
-      {/* ── TOAST ─────────────────────────────────────────────────────────── */}
+      {/* ── TOAST ── */}
       {toast && (
         <div
           style={{

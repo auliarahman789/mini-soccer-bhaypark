@@ -41,7 +41,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
     }
 
     const body = await request.json();
-    const { date, time_from, time_to, is_booking, booking_by } = body;
+    const { date, time_from, time_to, is_booking, booking_by, phone_number } =
+      body;
 
     if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return NextResponse.json(
@@ -66,6 +67,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       time_to,
       is_booking,
       booking_by,
+      phone_number,
     });
     if (!updated) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });

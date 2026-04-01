@@ -16,6 +16,7 @@ export async function initDB() {
       time_to TIME NOT NULL,
       is_booking BOOLEAN NOT NULL DEFAULT false,
       booking_by TEXT,
+      phone_number TEXT,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     )
@@ -29,6 +30,7 @@ export type Timetable = {
   time_to: string;
   is_booking: boolean;
   booking_by: string;
+  phone_number: string;
   created_at: string;
   updated_at: string;
 };
@@ -39,6 +41,7 @@ export type CreateTimetableInput = {
   time_to: string;
   is_booking?: boolean;
   booking_by?: string;
+  phone_number?: string;
 };
 
 export type UpdateTimetableInput = Partial<CreateTimetableInput>;
@@ -53,6 +56,7 @@ export async function getTimetables(date?: string): Promise<Timetable[]> {
              time_to::text,
              is_booking,
              booking_by::text,
+             phone_number::text,
              created_at,
              updated_at
       FROM timetable
@@ -69,6 +73,7 @@ export async function getTimetables(date?: string): Promise<Timetable[]> {
            time_to::text,
            is_booking,
            booking_by::text,
+           phone_number::text,
            created_at,
            updated_at
     FROM timetable
@@ -86,6 +91,7 @@ export async function getTimetableById(id: number): Promise<Timetable | null> {
            time_to::text,
            is_booking,
            booking_by::text,
+           phone_number::text,
            created_at,
            updated_at
     FROM timetable WHERE id = ${id}
@@ -131,6 +137,7 @@ export async function updateTimetable(
       time_to    = ${input.time_to ?? existing.time_to}::time,
       is_booking = ${input.is_booking ?? existing.is_booking},
       booking_by = ${input.booking_by ?? existing.booking_by},
+      phone_number = ${input.phone_number ?? existing.phone_number},
       updated_at = NOW()
     WHERE id = ${id}
     RETURNING id,

@@ -27,6 +27,7 @@ async function migrate() {
         time_to TIME NOT NULL,
         is_booking BOOLEAN NOT NULL DEFAULT false,
         booking_by TEXT,
+        phone_number TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )
