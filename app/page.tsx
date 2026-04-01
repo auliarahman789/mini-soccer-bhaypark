@@ -281,7 +281,7 @@ export default function Page() {
               background: "linear-gradient(135deg,#C9A84C,#F0CC6E,#C9A84C)",
               color: "#1a0f00",
               fontFamily: "Oswald, sans-serif",
-              fontSize: "9px",
+              fontSize: "11px",
               fontWeight: 700,
               letterSpacing: "2px",
               textTransform: "uppercase",
@@ -290,8 +290,9 @@ export default function Page() {
               marginBottom: "10px",
             }}
           >
-            Kepolisian Negara Republik Indonesia Daerah Kepulauan Bangka
-            Belitung Pelayanan Markas
+            Kepolisian Negara Republik Indonesia <br />
+            Daerah Kepulauan Bangka Belitung <br />
+            Pelayanan Markas
           </span>
           <div
             style={{
