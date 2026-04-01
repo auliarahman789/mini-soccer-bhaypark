@@ -14,50 +14,149 @@ type Timetable = {
   created_at: string;
   updated_at: string;
 };
-
 type SlotTime = { time_from: string; time_to: string };
+type DaySummary = { hasAvailable: boolean; hasBooked: boolean };
 
-const today = format(new Date(), "yyyy-MM-dd");
+const MONTH_NAMES = [
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
+];
+const DAY_NAMES = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+const today = new Date();
+const todayStr = format(today, "yyyy-MM-dd");
 
 function formatTime(t: string) {
   return t?.slice(0, 5) ?? "";
 }
-function formatDate(d: string) {
-  if (!d) return "";
-  const [y, m, day] = d.slice(0, 10).split("-");
-  return `${day}/${m}/${y}`;
+function formatDateLabel(year: number, month: number, day: number) {
+  return `${String(day).padStart(2, "0")}/${String(month + 1).padStart(2, "0")}/${year}`;
+}
+function toDateStr(year: number, month: number, day: number) {
+  return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-const inputClass =
-  "w-full bg-neutral-800 border border-neutral-700 text-neutral-100 px-3 py-2.5 rounded-lg text-sm outline-none focus:border-yellow-400 transition-colors [color-scheme:dark]";
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        marginBottom: "14px",
+      }}
+    >
+      <span
+        style={{
+          fontFamily: "Oswald, sans-serif",
+          fontSize: "12px",
+          fontWeight: 600,
+          letterSpacing: "2px",
+          textTransform: "uppercase",
+          color: "#C9A84C",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {children}
+      </span>
+      <span
+        style={{ flex: 1, height: "1px", background: "rgba(201,168,76,0.25)" }}
+      />
+    </div>
+  );
+}
+
+function Skeleton({
+  w = "100%",
+  h = "16px",
+  r = "6px",
+  mb = "0px",
+}: {
+  w?: string;
+  h?: string;
+  r?: string;
+  mb?: string;
+}) {
+  return (
+    <div
+      style={{
+        width: w,
+        height: h,
+        borderRadius: r,
+        background: "rgba(201,168,76,0.07)",
+        marginBottom: mb,
+        animation: "pulse 1.6s ease-in-out infinite",
+      }}
+    />
+  );
+}
+
+function Spinner({
+  size = 14,
+  color = "#C9A84C",
+}: {
+  size?: number;
+  color?: string;
+}) {
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        border: `2px solid rgba(201,168,76,0.18)`,
+        borderTopColor: color,
+        animation: "spin 0.65s linear infinite",
+        flexShrink: 0,
+      }}
+    />
+  );
+}
 
 export default function TimetablePage() {
   const router = useRouter();
   const [username, setUsername] = useState<string>("");
+  const [pageReady, setPageReady] = useState(false);
 
-  // Timetable state (same as before)
+  const [currentYear, setCurrentYear] = useState(today.getFullYear());
+  const [currentMonth, setCurrentMonth] = useState(today.getMonth());
+  const [selectedDay, setSelectedDay] = useState<number | null>(
+    today.getDate(),
+  );
+  const [monthSummary, setMonthSummary] = useState<Record<number, DaySummary>>(
+    {},
+  );
+  const [loadingMonth, setLoadingMonth] = useState(false);
+
   const [entries, setEntries] = useState<Timetable[]>([]);
-  const [filterDate, setFilterDate] = useState(today);
   const [loading, setLoading] = useState(false);
 
-  const [formDate, setFormDate] = useState(today);
+  const [formDate, setFormDate] = useState(todayStr);
   const [slots, setSlots] = useState<SlotTime[]>([
     { time_from: "08:00", time_to: "09:00" },
   ]);
   const [isBooking, setIsBooking] = useState(false);
   const [bookingBy, setBookingBy] = useState("");
-
   const [editId, setEditId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
+
   const [toast, setToast] = useState<{
     msg: string;
     type: "ok" | "err";
   } | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
-
-  // Auth modals
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [cpCurrent, setCpCurrent] = useState("");
   const [cpNew, setCpNew] = useState("");
   const [cpConfirm, setCpConfirm] = useState("");
@@ -69,44 +168,120 @@ export default function TimetablePage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // Get current user from cookie/session (via a lightweight endpoint)
   useEffect(() => {
     fetch("/api/admin/me")
       .then((r) => r.json())
       .then((j) => {
         if (j.username) setUsername(j.username);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setPageReady(true));
   }, []);
 
+  const fetchMonthSummary = useCallback(async () => {
+    setLoadingMonth(true);
+    try {
+      const ym = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
+      const res = await fetch(`/api/timetable?month=${ym}`);
+      const json = await res.json();
+      const summary: Record<number, DaySummary> = {};
+      let data: Timetable[] =
+        json.success && json.data?.length ? json.data : [];
+      if (!data.length) {
+        const fallback = await fetch("/api/timetable").then((r) => r.json());
+        data = fallback.success ? fallback.data : [];
+      }
+      data.forEach((entry: Timetable) => {
+        const [y, m, d] = entry.date.slice(0, 10).split("-").map(Number);
+        if (y === currentYear && m === currentMonth + 1) {
+          if (!summary[d])
+            summary[d] = { hasAvailable: false, hasBooked: false };
+          if (entry.is_booking) summary[d].hasBooked = true;
+          else summary[d].hasAvailable = true;
+        }
+      });
+      setMonthSummary(summary);
+    } catch {
+      setMonthSummary({});
+    } finally {
+      setLoadingMonth(false);
+    }
+  }, [currentYear, currentMonth]);
+
+  useEffect(() => {
+    fetchMonthSummary();
+  }, [fetchMonthSummary]);
+
   const fetchEntries = useCallback(async () => {
+    if (selectedDay === null) {
+      setEntries([]);
+      return;
+    }
     setLoading(true);
     try {
-      const url = filterDate
-        ? `/api/timetable?date=${filterDate}`
-        : "/api/timetable";
-      const res = await fetch(url);
+      const res = await fetch(
+        `/api/timetable?date=${toDateStr(currentYear, currentMonth, selectedDay)}`,
+      );
       const json = await res.json();
-      if (json.success) setEntries(json.data);
+      if (json.success)
+        setEntries(
+          [...(json.data as Timetable[])].sort((a, b) =>
+            a.time_from.localeCompare(b.time_from),
+          ),
+        );
     } catch {
       showToast("Gagal memuat data", "err");
     } finally {
       setLoading(false);
     }
-  }, [filterDate]);
+  }, [selectedDay, currentYear, currentMonth]);
 
   useEffect(() => {
     fetchEntries();
   }, [fetchEntries]);
 
-  // --- Logout ---
+  const firstDay = new Date(currentYear, currentMonth, 1).getDay();
+  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+
+  const getDayStatus = (day: number): "tersedia" | "penuh" | "unknown" => {
+    const s = monthSummary[day];
+    if (!s) return "unknown";
+    return s.hasAvailable ? "tersedia" : "penuh";
+  };
+
+  const prevMonth = () => {
+    setSelectedDay(null);
+    if (currentMonth === 0) {
+      setCurrentMonth(11);
+      setCurrentYear((y) => y - 1);
+    } else setCurrentMonth((m) => m - 1);
+  };
+  const nextMonth = () => {
+    setSelectedDay(null);
+    if (currentMonth === 11) {
+      setCurrentMonth(0);
+      setCurrentYear((y) => y + 1);
+    } else setCurrentMonth((m) => m + 1);
+  };
+
+  const handleDayClick = (day: number) => {
+    setSelectedDay(day);
+    setFormDate(toDateStr(currentYear, currentMonth, day));
+    setTimeout(
+      () =>
+        document
+          .getElementById("slot-section")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      80,
+    );
+  };
+
   const handleLogout = async () => {
     await fetch("/api/admin/logout", { method: "POST" });
     router.push("/admin/login");
     router.refresh();
   };
 
-  // --- Change Password ---
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setCpError("");
@@ -135,9 +310,7 @@ export default function TimetablePage() {
         setCpCurrent("");
         setCpNew("");
         setCpConfirm("");
-      } else {
-        setCpError(json.error ?? "Gagal mengubah password");
-      }
+      } else setCpError(json.error ?? "Gagal mengubah password");
     } catch {
       setCpError("Terjadi kesalahan");
     } finally {
@@ -145,13 +318,16 @@ export default function TimetablePage() {
     }
   };
 
-  // --- Slot helpers ---
   const addSlot = () => {
     const last = slots[slots.length - 1];
     const [h] = last.time_to.split(":").map(Number);
-    const from = `${String(h).padStart(2, "0")}:00`;
-    const to = `${String(Math.min(h + 1, 23)).padStart(2, "0")}:${h >= 23 ? "59" : "00"}`;
-    setSlots([...slots, { time_from: from, time_to: to }]);
+    setSlots([
+      ...slots,
+      {
+        time_from: `${String(h).padStart(2, "0")}:00`,
+        time_to: `${String(Math.min(h + 1, 23)).padStart(2, "0")}:${h >= 23 ? "59" : "00"}`,
+      },
+    ]);
   };
   const removeSlot = (i: number) => {
     if (slots.length > 1) setSlots(slots.filter((_, idx) => idx !== i));
@@ -160,12 +336,17 @@ export default function TimetablePage() {
     setSlots(slots.map((s, idx) => (idx === i ? { ...s, [field]: value } : s)));
 
   const openCreate = () => {
-    setFormDate(today);
+    setFormDate(
+      selectedDay
+        ? toDateStr(currentYear, currentMonth, selectedDay)
+        : todayStr,
+    );
     setSlots([{ time_from: "08:00", time_to: "09:00" }]);
     setIsBooking(false);
     setBookingBy("");
     setEditId(null);
     setShowForm(true);
+    setShowSettingsMenu(false);
   };
   const openEdit = (entry: Timetable) => {
     setFormDate(entry.date.slice(0, 10));
@@ -214,6 +395,7 @@ export default function TimetablePage() {
           showToast("Berhasil diperbarui ✓");
           closeForm();
           fetchEntries();
+          fetchMonthSummary();
         } else showToast(json.error || "Gagal memperbarui", "err");
       } else {
         const results = await Promise.all(
@@ -240,6 +422,7 @@ export default function TimetablePage() {
           );
           closeForm();
           fetchEntries();
+          fetchMonthSummary();
         } else
           showToast(`${failed.length} dari ${slots.length} slot gagal`, "err");
       }
@@ -256,6 +439,7 @@ export default function TimetablePage() {
         showToast("Berhasil dihapus ✓");
         setDeleteId(null);
         fetchEntries();
+        fetchMonthSummary();
       } else showToast(json.error || "Gagal menghapus", "err");
     } catch {
       showToast("Terjadi kesalahan", "err");
@@ -272,6 +456,7 @@ export default function TimetablePage() {
       const json = await res.json();
       if (json.success) {
         fetchEntries();
+        fetchMonthSummary();
         showToast(
           json.data.is_booking ? "Status: Booked ✓" : "Status: Available ✓",
         );
@@ -284,235 +469,1081 @@ export default function TimetablePage() {
   const booked = entries.filter((e) => e.is_booking).length;
   const available = entries.filter((e) => !e.is_booking).length;
 
-  const apiRoutes = [
-    { method: "GET", path: "/api/timetable", desc: "Semua slot" },
-    {
-      method: "GET",
-      path: "/api/timetable?date=YYYY-MM-DD",
-      desc: "Filter by tanggal",
-    },
-    { method: "GET", path: "/api/timetable/:id", desc: "Detail slot" },
-    { method: "POST", path: "/api/timetable", desc: "Buat slot baru" },
-    { method: "PUT", path: "/api/timetable/:id", desc: "Update slot" },
-    { method: "DELETE", path: "/api/timetable/:id", desc: "Hapus slot" },
-  ];
-  const methodColor: Record<string, string> = {
-    GET: "text-green-400",
-    POST: "text-yellow-400",
-    PUT: "text-blue-300",
-    DELETE: "text-red-400",
-  };
-
-  return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
-      {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-neutral-800 bg-neutral-950/95 backdrop-blur-md px-6 py-4 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
-          <span className="font-mono text-[20px] font-bold text-yellow-400 tracking-tight">
-            TIMETABLE
-          </span>
-          <span className="font-mono text-[11px] text-neutral-500 bg-neutral-800 px-2 py-0.5 rounded">
-            /api/timetable
-          </span>
-        </div>
-
-        {/* Right side: user info + actions */}
-        <div className="flex items-center gap-2">
-          {username && (
-            <span className="hidden sm:flex items-center gap-1.5 text-xs text-neutral-400 bg-neutral-800 border border-neutral-700 px-3 py-1.5 rounded-md">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
-              {username}
-            </span>
-          )}
-          <button
-            onClick={() => setShowChangePassword(true)}
-            className="text-neutral-400 hover:text-neutral-100 bg-neutral-800 border border-neutral-700 hover:border-yellow-400 px-3 py-1.5 rounded-md text-xs transition-all"
+  // ── PAGE LOADING SKELETON ──────────────────────────────────────────────────
+  if (!pageReady) {
+    return (
+      <>
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Mulish:wght@300;400;500;600&display=swap');
+          *{box-sizing:border-box;margin:0}
+          body{font-family:'Mulish',sans-serif;background:#0A0A0A}
+          @keyframes pulse{0%,100%{opacity:0.35}50%{opacity:0.85}}
+          @keyframes spin{to{transform:rotate(360deg)}}
+        `}</style>
+        <div style={{ minHeight: "100vh", background: "#0A0A0A" }}>
+          {/* Skeleton header */}
+          <div
+            style={{
+              borderBottom: "1px solid rgba(201,168,76,0.14)",
+              padding: "12px 16px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              background: "#0A0A0A",
+            }}
           >
-            Ganti Password
-          </button>
-          <button
-            onClick={() => setShowLogoutConfirm(true)}
-            className="text-neutral-400 hover:text-red-400 bg-neutral-800 border border-neutral-700 hover:border-red-400 px-3 py-1.5 rounded-md text-xs transition-all"
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <div
+                style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  background: "rgba(201,168,76,0.08)",
+                  animation: "pulse 1.6s infinite",
+                }}
+              />
+              <div>
+                <div
+                  style={{
+                    width: "80px",
+                    height: "14px",
+                    borderRadius: "4px",
+                    background: "rgba(201,168,76,0.1)",
+                    marginBottom: "5px",
+                    animation: "pulse 1.6s infinite",
+                  }}
+                />
+                <div
+                  style={{
+                    width: "55px",
+                    height: "9px",
+                    borderRadius: "4px",
+                    background: "rgba(201,168,76,0.06)",
+                    animation: "pulse 1.6s infinite",
+                  }}
+                />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <div
+                style={{
+                  width: "34px",
+                  height: "32px",
+                  borderRadius: "7px",
+                  background: "rgba(201,168,76,0.07)",
+                  animation: "pulse 1.6s infinite",
+                }}
+              />
+              <div
+                style={{
+                  width: "110px",
+                  height: "32px",
+                  borderRadius: "8px",
+                  background: "rgba(201,168,76,0.12)",
+                  animation: "pulse 1.6s infinite",
+                }}
+              />
+            </div>
+          </div>
+          {/* Skeleton body */}
+          <div
+            style={{
+              padding: "18px 14px",
+              maxWidth: "960px",
+              margin: "0 auto",
+            }}
           >
-            Logout
-          </button>
-          <button
-            onClick={openCreate}
-            className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-neutral-950 font-semibold text-sm px-4 py-2 rounded-md transition-colors"
-          >
-            <span className="text-base leading-none">+</span> Tambah Slot
-          </button>
-        </div>
-      </header>
-
-      <main className="max-w-4xl mx-auto px-6 py-8">
-        {/* Stats */}
-        <div className="grid grid-cols-3 gap-3 mb-7">
-          {[
-            {
-              label: "Total Slot",
-              value: entries.length,
-              color: "text-yellow-400",
-            },
-            { label: "Booked", value: booked, color: "text-red-400" },
-            { label: "Available", value: available, color: "text-green-400" },
-          ].map((s) => (
+            <div style={{ display: "flex", gap: "8px", marginBottom: "22px" }}>
+              {[1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  style={{
+                    flex: 1,
+                    height: "68px",
+                    borderRadius: "12px",
+                    background: "rgba(201,168,76,0.06)",
+                    animation: "pulse 1.6s infinite",
+                  }}
+                />
+              ))}
+            </div>
             <div
-              key={s.label}
-              className="bg-neutral-900 border border-neutral-800 rounded-xl px-5 py-4"
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1.45fr",
+                gap: "18px",
+              }}
             >
-              <div className={`font-mono text-3xl font-bold ${s.color}`}>
-                {s.value}
-              </div>
-              <div className="text-xs text-neutral-500 mt-0.5">{s.label}</div>
+              <div
+                style={{
+                  height: "340px",
+                  borderRadius: "14px",
+                  background: "rgba(201,168,76,0.05)",
+                  animation: "pulse 1.6s infinite",
+                }}
+              />
+              <div
+                style={{
+                  height: "280px",
+                  borderRadius: "14px",
+                  background: "rgba(201,168,76,0.05)",
+                  animation: "pulse 1.6s infinite",
+                }}
+              />
             </div>
-          ))}
-        </div>
-
-        {/* Filter */}
-        <div className="flex items-center gap-2.5 mb-5">
-          <div className="relative flex-1">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 text-sm pointer-events-none">
-              Filter tanggal:
-            </span>
-            <input
-              type="date"
-              value={filterDate}
-              onChange={(e) => setFilterDate(e.target.value)}
-              className="w-full bg-neutral-900 border border-neutral-800 text-neutral-100 pl-[120px] pr-3 py-2.5 rounded-lg text-sm outline-none cursor-pointer [color-scheme:dark] focus:border-neutral-600 transition-colors"
+          </div>
+          {/* Loading indicator bottom-right */}
+          <div
+            style={{
+              position: "fixed",
+              bottom: "20px",
+              right: "16px",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              background: "#111",
+              border: "1px solid rgba(201,168,76,0.22)",
+              padding: "9px 14px",
+              borderRadius: "10px",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+            }}
+          >
+            <div
+              style={{
+                width: "13px",
+                height: "13px",
+                borderRadius: "50%",
+                border: "2px solid rgba(201,168,76,0.15)",
+                borderTopColor: "#C9A84C",
+                animation: "spin 0.65s linear infinite",
+              }}
             />
+            <span
+              style={{
+                fontSize: "11px",
+                color: "#C9A84C",
+                fontFamily: "Mulish, sans-serif",
+                fontWeight: 600,
+              }}
+            >
+              Memuat panel...
+            </span>
           </div>
         </div>
+      </>
+    );
+  }
 
-        {/* Table */}
-        <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">
-          <div className="font-mono grid grid-cols-[1fr_90px_90px_100px_1fr_110px] px-5 py-3 border-b border-neutral-800 text-[11px] text-neutral-500 uppercase tracking-widest">
-            <div>Tanggal</div>
-            <div>Mulai</div>
-            <div>Selesai</div>
-            <div>Status</div>
-            <div>Booking By</div>
-            <div className="text-right">Aksi</div>
-          </div>
+  // ── FULL RENDER ────────────────────────────────────────────────────────────
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Mulish:wght@300;400;500;600&display=swap');
+        *{box-sizing:border-box}
+        body{font-family:'Mulish',sans-serif;background:#0A0A0A;margin:0;color:#EAEAEA}
+        @keyframes pulse{0%,100%{opacity:0.35}50%{opacity:0.85}}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+        @keyframes slideUp{from{transform:translateY(14px);opacity:0}to{transform:translateY(0);opacity:1}}
+        @keyframes slideDown{from{transform:translateY(-8px);opacity:0}to{transform:translateY(0);opacity:1}}
 
-          {loading ? (
-            <div className="py-12 text-center text-neutral-500 text-sm">
-              Memuat data...
-            </div>
-          ) : entries.length === 0 ? (
-            <div className="py-14 px-6 text-center text-neutral-500">
-              <div className="text-3xl mb-2">📅</div>
-              <div className="text-sm">
-                {filterDate
-                  ? `Tidak ada slot pada ${formatDate(filterDate)}`
-                  : "Belum ada data timetable"}
-              </div>
-              <button
-                onClick={openCreate}
-                className="mt-4 border border-yellow-400 text-yellow-400 hover:bg-yellow-400/10 px-4 py-2 rounded-md text-sm transition-colors"
+        .admin-input{width:100%;background:#1a1a1a;border:1px solid rgba(255,255,255,0.08);color:#EAEAEA;padding:10px 12px;border-radius:8px;font-size:13px;font-family:'Mulish',sans-serif;outline:none;color-scheme:dark;transition:border-color 0.2s}
+        .admin-input:focus{border-color:#C9A84C}
+        .admin-input::placeholder{color:#444}
+
+        .btn-gold{background:linear-gradient(135deg,#C9A84C,#F0CC6E);color:#1a0f00;border-radius:8px;font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:1px;text-transform:uppercase;border:none;cursor:pointer;transition:filter 0.2s,transform 0.15s;white-space:nowrap}
+        .btn-gold:hover{filter:brightness(1.1);transform:translateY(-1px)}
+        .btn-gold:disabled{opacity:0.6;cursor:not-allowed;transform:none}
+
+        .btn-gs{background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);color:#C9A84C;border-radius:7px;font-size:10px;font-family:'Mulish',sans-serif;font-weight:600;cursor:pointer;transition:all 0.2s;white-space:nowrap;padding:5px 9px}
+        .btn-gs:hover{background:rgba(201,168,76,0.16);border-color:rgba(201,168,76,0.45)}
+        .btn-ds{background:rgba(204,34,34,0.09);border:1px solid rgba(204,34,34,0.2);color:#E57373;border-radius:7px;font-size:10px;font-family:'Mulish',sans-serif;font-weight:600;cursor:pointer;transition:all 0.2s;padding:5px 9px}
+        .btn-ds:hover{background:rgba(204,34,34,0.18);border-color:rgba(204,34,34,0.45)}
+
+        .cal-day{aspect-ratio:1;border-radius:7px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;transition:all 0.12s;border:1px solid transparent;position:relative}
+        .cal-day:hover{transform:scale(1.09);z-index:2}
+
+        .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.8);backdrop-filter:blur(5px);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px;animation:fadeIn 0.18s ease}
+        .modal-card{background:#111;border:1px solid rgba(201,168,76,0.28);border-radius:16px;width:100%;max-height:92vh;overflow-y:auto;box-shadow:0 24px 64px rgba(0,0,0,0.65);animation:slideUp 0.22s ease}
+        .modal-hd{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid rgba(201,168,76,0.16);background:linear-gradient(90deg,rgba(201,168,76,0.07),transparent)}
+
+        .settings-menu{position:absolute;top:calc(100% + 7px);right:0;background:#161616;border:1px solid rgba(201,168,76,0.28);border-radius:12px;padding:8px;min-width:190px;box-shadow:0 16px 40px rgba(0,0,0,0.55);z-index:60;animation:slideDown 0.17s ease}
+        .smenu-btn{width:100%;padding:8px 10px;background:transparent;border:none;font-size:12px;font-family:'Mulish',sans-serif;font-weight:600;cursor:pointer;text-align:left;border-radius:7px;transition:background 0.15s}
+
+        @media(max-width:639px){.grid-layout{grid-template-columns:1fr !important}}
+      `}</style>
+
+      <div style={{ minHeight: "100vh", background: "#0A0A0A" }}>
+        {/* ── HEADER ────────────────────────────────────────────────────────── */}
+        <header
+          style={{
+            position: "sticky",
+            top: 0,
+            zIndex: 40,
+            borderBottom: "1px solid rgba(201,168,76,0.16)",
+            background: "rgba(10,10,10,0.97)",
+            backdropFilter: "blur(14px)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "10px 16px",
+              gap: "8px",
+            }}
+          >
+            {/* Logo */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                flexShrink: 0,
+              }}
+            >
+              <div
+                style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  background: "rgba(201,168,76,0.12)",
+                  border: "1px solid rgba(201,168,76,0.28)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "14px",
+                  flexShrink: 0,
+                }}
               >
-                + Tambah Slot Pertama
+                ⚽
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontFamily: "Oswald, sans-serif",
+                    fontSize: "15px",
+                    fontWeight: 700,
+                    color: "#F0CC6E",
+                    letterSpacing: "0.8px",
+                    textTransform: "uppercase",
+                    lineHeight: 1,
+                  }}
+                >
+                  Bhaypark
+                </div>
+                <div
+                  style={{
+                    fontSize: "9px",
+                    color: "#7A6030",
+                    letterSpacing: "1.8px",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Admin Panel
+                </div>
+              </div>
+            </div>
+
+            {/* Right actions — always a flat row, no hamburger */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "7px",
+                flexShrink: 0,
+              }}
+            >
+              {/* Gear settings button + popover */}
+              <div style={{ position: "relative" }}>
+                <button
+                  onClick={() => setShowSettingsMenu((v) => !v)}
+                  style={{
+                    width: "34px",
+                    height: "34px",
+                    borderRadius: "8px",
+                    background: "rgba(201,168,76,0.09)",
+                    border: "1px solid rgba(201,168,76,0.22)",
+                    color: "#C9A84C",
+                    fontSize: "16px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "all 0.2s",
+                  }}
+                  title="Pengaturan"
+                >
+                  ⚙
+                </button>
+
+                {showSettingsMenu && (
+                  <>
+                    <div
+                      style={{ position: "fixed", inset: 0, zIndex: 55 }}
+                      onClick={() => setShowSettingsMenu(false)}
+                    />
+                    <div className="settings-menu">
+                      {username && (
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "7px",
+                            padding: "8px 10px",
+                            marginBottom: "5px",
+                            background: "rgba(201,168,76,0.07)",
+                            border: "1px solid rgba(201,168,76,0.14)",
+                            borderRadius: "8px",
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: "6px",
+                              height: "6px",
+                              borderRadius: "50%",
+                              background: "#2ECC71",
+                              flexShrink: 0,
+                            }}
+                          />
+                          <span
+                            style={{
+                              fontSize: "12px",
+                              color: "#EAEAEA",
+                              fontWeight: 600,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {username}
+                          </span>
+                        </div>
+                      )}
+                      <div
+                        style={{
+                          height: "1px",
+                          background: "rgba(255,255,255,0.05)",
+                          margin: "3px 0 5px",
+                        }}
+                      />
+                      <button
+                        className="smenu-btn"
+                        style={{ color: "#C9A84C" }}
+                        onClick={() => {
+                          setShowChangePassword(true);
+                          setShowSettingsMenu(false);
+                        }}
+                        onMouseEnter={(e) =>
+                          (e.currentTarget.style.background =
+                            "rgba(201,168,76,0.09)")
+                        }
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.background = "transparent")
+                        }
+                      >
+                        🔑 Ganti Password
+                      </button>
+                      <button
+                        className="smenu-btn"
+                        style={{ color: "#E57373" }}
+                        onClick={() => {
+                          setShowLogoutConfirm(true);
+                          setShowSettingsMenu(false);
+                        }}
+                        onMouseEnter={(e) =>
+                          (e.currentTarget.style.background =
+                            "rgba(204,34,34,0.1)")
+                        }
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.background = "transparent")
+                        }
+                      >
+                        🚪 Logout
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Tambah Slot — always visible */}
+              <button
+                className="btn-gold"
+                onClick={openCreate}
+                style={{ padding: "8px 13px", fontSize: "12px" }}
+              >
+                + Tambah Slot
               </button>
             </div>
-          ) : (
-            entries.map((entry) => (
-              <div
-                key={entry.id}
-                className="grid grid-cols-[1fr_90px_90px_100px_1fr_110px] px-5 py-3.5 border-b border-neutral-800/60 hover:bg-neutral-800/30 transition-colors items-center"
-              >
-                <div className="flex items-center gap-2.5">
-                  <div
-                    className={`w-0.5 h-8 rounded-full flex-shrink-0 ${entry.is_booking ? "bg-red-400" : "bg-green-400"}`}
-                  />
-                  <div>
-                    <div className="font-mono text-sm">
-                      {formatDate(entry.date)}
-                    </div>
-                    <div className="text-[11px] text-neutral-500">
-                      ID #{entry.id}
-                    </div>
-                  </div>
-                </div>
-                <div className="font-mono text-[15px] text-yellow-400">
-                  {formatTime(entry.time_from)}
-                </div>
-                <div className="font-mono text-[15px] text-neutral-500">
-                  {formatTime(entry.time_to)}
-                </div>
-                <div>
-                  <button
-                    onClick={() => toggleBooking(entry)}
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-semibold tracking-wide border transition-all cursor-pointer ${entry.is_booking ? "bg-red-400/10 text-red-400 border-red-400/30 hover:bg-red-400/20" : "bg-green-400/10 text-green-400 border-green-400/30 hover:bg-green-400/20"}`}
-                  >
-                    {entry.is_booking ? "BOOKED" : "OPEN"}
-                  </button>
-                </div>
-                <div className="text-sm text-neutral-300 truncate pr-2">
-                  {entry.booking_by ? (
-                    <span className="flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
-                      {entry.booking_by}
-                    </span>
-                  ) : (
-                    <span className="text-neutral-600 text-xs italic">—</span>
-                  )}
-                </div>
-                <div className="flex gap-1.5 justify-end">
-                  <button
-                    onClick={() => openEdit(entry)}
-                    className="bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-100 hover:border-yellow-400 px-3 py-1.5 rounded-md text-xs transition-all"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => setDeleteId(entry.id)}
-                    className="bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-red-400 hover:border-red-400 px-3 py-1.5 rounded-md text-xs transition-all"
-                  >
-                    Hapus
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* API Reference */}
-        <div className="mt-10 bg-neutral-900 border border-neutral-800 rounded-xl px-6 py-5">
-          <div className="text-[11px] uppercase tracking-widest text-neutral-500 font-semibold mb-4">
-            API Reference
           </div>
-          <div className="flex flex-col gap-2">
-            {apiRoutes.map((r) => (
+        </header>
+
+        {/* ── MAIN ──────────────────────────────────────────────────────────── */}
+        <main
+          style={{
+            maxWidth: "960px",
+            margin: "0 auto",
+            padding: "16px 14px 60px",
+          }}
+        >
+          {/* Stats row */}
+          <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
+            {[
+              { label: "Total", value: entries.length, color: "#F0CC6E" },
+              { label: "Booked", value: booked, color: "#E57373" },
+              { label: "Available", value: available, color: "#2ECC71" },
+            ].map((s) => (
               <div
-                key={`${r.method}-${r.path}`}
-                className="font-mono flex items-center gap-3 text-xs"
+                key={s.label}
+                style={{
+                  flex: 1,
+                  background: "#111",
+                  border: "1px solid rgba(201,168,76,0.16)",
+                  borderRadius: "12px",
+                  padding: "11px 13px",
+                }}
               >
-                <span
-                  className={`${methodColor[r.method]} w-[50px] flex-shrink-0 font-bold`}
+                {loading ? (
+                  <Skeleton h="24px" mb="4px" r="5px" />
+                ) : (
+                  <div
+                    style={{
+                      fontFamily: "Oswald, sans-serif",
+                      fontSize: "24px",
+                      fontWeight: 700,
+                      color: s.color,
+                      lineHeight: 1,
+                    }}
+                  >
+                    {s.value}
+                  </div>
+                )}
+                <div
+                  style={{
+                    fontSize: "9px",
+                    color: "#555",
+                    marginTop: "3px",
+                    letterSpacing: "1px",
+                    textTransform: "uppercase",
+                  }}
                 >
-                  {r.method}
-                </span>
-                <span className="text-neutral-200 flex-1">{r.path}</span>
-                <span className="text-neutral-500">{r.desc}</span>
+                  {s.label}
+                </div>
               </div>
             ))}
           </div>
-        </div>
-      </main>
 
-      {/* ── FORM MODAL ── */}
+          {/* 2-col grid */}
+          <div
+            className="grid-layout"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0,1fr) minmax(0,1.45fr)",
+              gap: "16px",
+              alignItems: "start",
+            }}
+          >
+            {/* ── CALENDAR ── */}
+            <div>
+              <SectionTitle>Pilih Tanggal</SectionTitle>
+              <div
+                style={{
+                  background: "#111",
+                  border: "1px solid rgba(201,168,76,0.2)",
+                  borderRadius: "14px",
+                  overflow: "hidden",
+                }}
+              >
+                {/* Nav */}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "10px 13px",
+                    borderBottom: "1px solid rgba(201,168,76,0.15)",
+                    background:
+                      "linear-gradient(90deg,rgba(201,168,76,0.06),transparent)",
+                  }}
+                >
+                  <button
+                    onClick={prevMonth}
+                    style={{
+                      width: "28px",
+                      height: "28px",
+                      borderRadius: "6px",
+                      background: "rgba(201,168,76,0.1)",
+                      border: "1px solid rgba(201,168,76,0.2)",
+                      color: "#C9A84C",
+                      fontSize: "16px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    ‹
+                  </button>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "7px",
+                    }}
+                  >
+                    {loadingMonth && <Spinner size={11} />}
+                    <span
+                      style={{
+                        fontFamily: "Oswald, sans-serif",
+                        fontSize: "13px",
+                        fontWeight: 600,
+                        color: "#F0CC6E",
+                      }}
+                    >
+                      {MONTH_NAMES[currentMonth]} {currentYear}
+                    </span>
+                  </div>
+                  <button
+                    onClick={nextMonth}
+                    style={{
+                      width: "28px",
+                      height: "28px",
+                      borderRadius: "6px",
+                      background: "rgba(201,168,76,0.1)",
+                      border: "1px solid rgba(201,168,76,0.2)",
+                      color: "#C9A84C",
+                      fontSize: "16px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    ›
+                  </button>
+                </div>
+
+                {/* Day names */}
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(7,1fr)",
+                    padding: "8px 9px 2px",
+                  }}
+                >
+                  {DAY_NAMES.map((d) => (
+                    <div
+                      key={d}
+                      style={{
+                        textAlign: "center",
+                        fontSize: "9px",
+                        fontWeight: 700,
+                        letterSpacing: "1px",
+                        color: "#555",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {d}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Day grid */}
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(7,1fr)",
+                    gap: "2px",
+                    padding: "2px 9px 9px",
+                  }}
+                >
+                  {Array.from({ length: firstDay }).map((_, i) => (
+                    <div key={`e-${i}`} />
+                  ))}
+                  {Array.from({ length: daysInMonth }).map((_, i) => {
+                    const day = i + 1;
+                    const status = getDayStatus(day);
+                    const isToday =
+                      day === today.getDate() &&
+                      currentMonth === today.getMonth() &&
+                      currentYear === today.getFullYear();
+                    const isSel = selectedDay === day;
+                    const bg = isSel
+                      ? "rgba(201,168,76,0.2)"
+                      : status === "tersedia"
+                        ? "rgba(46,204,113,0.1)"
+                        : status === "penuh"
+                          ? "rgba(204,34,34,0.1)"
+                          : "rgba(100,100,100,0.06)";
+                    const bc = isSel
+                      ? "#F0CC6E"
+                      : status === "tersedia"
+                        ? "rgba(46,204,113,0.2)"
+                        : status === "penuh"
+                          ? "rgba(204,34,34,0.2)"
+                          : "rgba(100,100,100,0.1)";
+                    const tc = isSel
+                      ? "#F0CC6E"
+                      : status === "tersedia"
+                        ? "#2ECC71"
+                        : status === "penuh"
+                          ? "#E57373"
+                          : "#555";
+                    const dc =
+                      status === "tersedia"
+                        ? "#2ECC71"
+                        : status === "penuh"
+                          ? "#E57373"
+                          : "#222";
+                    return (
+                      <div
+                        key={day}
+                        className="cal-day"
+                        onClick={() => handleDayClick(day)}
+                        style={{
+                          background: bg,
+                          border: `1px solid ${bc}`,
+                          boxShadow: isSel
+                            ? "0 0 0 2px #F0CC6E"
+                            : isToday
+                              ? "0 0 0 2px #C9A84C"
+                              : "none",
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontFamily: "Oswald, sans-serif",
+                            fontSize: "11px",
+                            fontWeight: 600,
+                            color: tc,
+                            lineHeight: 1,
+                          }}
+                        >
+                          {day}
+                        </span>
+                        {loadingMonth ? (
+                          <span
+                            style={{
+                              width: "3px",
+                              height: "3px",
+                              borderRadius: "50%",
+                              background: "rgba(201,168,76,0.2)",
+                              marginTop: "2px",
+                              animation: "pulse 1.6s infinite",
+                            }}
+                          />
+                        ) : (
+                          <span
+                            style={{
+                              width: "3px",
+                              height: "3px",
+                              borderRadius: "50%",
+                              background: dc,
+                              marginTop: "2px",
+                            }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Legend */}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "10px",
+                    padding: "0 9px 9px",
+                    justifyContent: "center",
+                  }}
+                >
+                  {[
+                    { color: "#2ECC71", label: "Tersedia" },
+                    { color: "#E57373", label: "Penuh" },
+                    { color: "#C9A84C", label: "Hari Ini", o: true },
+                  ].map((l) => (
+                    <div
+                      key={l.label}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        fontSize: "9px",
+                        color: "#666",
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: "6px",
+                          height: "6px",
+                          borderRadius: "50%",
+                          background: l.color,
+                          display: "inline-block",
+                          ...(l.o
+                            ? {
+                                outline: `2px solid ${l.color}`,
+                                outlineOffset: "1px",
+                              }
+                            : {}),
+                        }}
+                      />
+                      {l.label}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* ── SLOT LIST ── */}
+            <div id="slot-section">
+              <SectionTitle>
+                {selectedDay
+                  ? `Slot — ${formatDateLabel(currentYear, currentMonth, selectedDay)}`
+                  : "Detail Jadwal"}
+              </SectionTitle>
+
+              {!selectedDay ? (
+                <div
+                  style={{
+                    background: "#111",
+                    border: "1px dashed rgba(201,168,76,0.16)",
+                    borderRadius: "14px",
+                    padding: "36px 20px",
+                    textAlign: "center",
+                  }}
+                >
+                  <div style={{ fontSize: "26px", opacity: 0.22 }}>📅</div>
+                  <div
+                    style={{
+                      fontFamily: "Oswald, sans-serif",
+                      fontSize: "10px",
+                      color: "#555",
+                      letterSpacing: "1.5px",
+                      textTransform: "uppercase",
+                      marginTop: "10px",
+                    }}
+                  >
+                    Pilih tanggal di kalender
+                  </div>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    background: "#111",
+                    border: "1px solid rgba(201,168,76,0.16)",
+                    borderRadius: "14px",
+                    overflow: "hidden",
+                  }}
+                >
+                  {/* List header */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "10px 13px",
+                      borderBottom: "1px solid rgba(201,168,76,0.1)",
+                      background:
+                        "linear-gradient(90deg,rgba(201,168,76,0.05),transparent)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "6px",
+                        alignItems: "center",
+                      }}
+                    >
+                      {loading ? (
+                        <>
+                          <Skeleton w="66px" h="20px" r="20px" />
+                          <Skeleton w="56px" h="20px" r="20px" />
+                        </>
+                      ) : (
+                        <>
+                          <span
+                            style={{
+                              fontSize: "10px",
+                              fontWeight: 700,
+                              padding: "3px 8px",
+                              borderRadius: "20px",
+                              background: "rgba(46,204,113,0.1)",
+                              color: "#2ECC71",
+                              border: "1px solid rgba(46,204,113,0.18)",
+                            }}
+                          >
+                            {available} tersedia
+                          </span>
+                          <span
+                            style={{
+                              fontSize: "10px",
+                              fontWeight: 700,
+                              padding: "3px 8px",
+                              borderRadius: "20px",
+                              background: "rgba(204,34,34,0.1)",
+                              color: "#E57373",
+                              border: "1px solid rgba(204,34,34,0.18)",
+                            }}
+                          >
+                            {booked} terisi
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <button
+                      className="btn-gold"
+                      onClick={openCreate}
+                      style={{ padding: "5px 11px", fontSize: "11px" }}
+                    >
+                      + Slot
+                    </button>
+                  </div>
+
+                  {/* Rows */}
+                  <div style={{ padding: "9px 9px 3px" }}>
+                    {loading ? (
+                      [1, 2, 3].map((i) => (
+                        <div
+                          key={i}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "10px",
+                            padding: "11px 12px",
+                            borderRadius: "9px",
+                            border: "1px solid rgba(255,255,255,0.04)",
+                            background: "rgba(255,255,255,0.015)",
+                            marginBottom: "7px",
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: "3px",
+                              height: "28px",
+                              borderRadius: "2px",
+                              background: "rgba(201,168,76,0.12)",
+                              flexShrink: 0,
+                              animation: "pulse 1.6s infinite",
+                            }}
+                          />
+                          <div style={{ flex: 1 }}>
+                            <Skeleton w="100px" h="13px" mb="5px" />
+                            <Skeleton w="45px" h="9px" />
+                          </div>
+                          <Skeleton w="50px" h="20px" r="20px" />
+                          <div style={{ display: "flex", gap: "4px" }}>
+                            <Skeleton w="40px" h="26px" r="7px" />
+                            <Skeleton w="40px" h="26px" r="7px" />
+                          </div>
+                        </div>
+                      ))
+                    ) : entries.length === 0 ? (
+                      <div style={{ padding: "28px", textAlign: "center" }}>
+                        <div
+                          style={{
+                            fontSize: "20px",
+                            opacity: 0.22,
+                            marginBottom: "7px",
+                          }}
+                        >
+                          📭
+                        </div>
+                        <div style={{ color: "#555", fontSize: "12px" }}>
+                          Tidak ada slot pada tanggal ini
+                        </div>
+                        <button
+                          className="btn-gs"
+                          onClick={openCreate}
+                          style={{ marginTop: "11px", padding: "7px 14px" }}
+                        >
+                          + Tambah Slot Pertama
+                        </button>
+                      </div>
+                    ) : (
+                      entries.map((entry) => (
+                        <div
+                          key={entry.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            padding: "10px 11px",
+                            borderRadius: "9px",
+                            border: "1px solid",
+                            marginBottom: "6px",
+                            background: entry.is_booking
+                              ? "rgba(204,34,34,0.06)"
+                              : "rgba(46,204,113,0.06)",
+                            borderColor: entry.is_booking
+                              ? "rgba(204,34,34,0.16)"
+                              : "rgba(46,204,113,0.13)",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "9px",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: "3px",
+                                height: "28px",
+                                borderRadius: "2px",
+                                background: entry.is_booking
+                                  ? "#E57373"
+                                  : "#2ECC71",
+                                flexShrink: 0,
+                              }}
+                            />
+                            <div>
+                              <div
+                                style={{
+                                  fontFamily: "Oswald, sans-serif",
+                                  fontSize: "14px",
+                                  color: "#F0CC6E",
+                                  fontWeight: 600,
+                                  lineHeight: 1,
+                                }}
+                              >
+                                {formatTime(entry.time_from)} –{" "}
+                                {formatTime(entry.time_to)}
+                              </div>
+                              <div
+                                style={{
+                                  fontSize: "9px",
+                                  color: "#555",
+                                  marginTop: "2px",
+                                }}
+                              >
+                                ID #{entry.id}
+                              </div>
+                            </div>
+                          </div>
+                          <div
+                            style={{
+                              flex: 1,
+                              padding: "0 8px",
+                              textAlign: "center",
+                            }}
+                          >
+                            <button
+                              onClick={() => toggleBooking(entry)}
+                              style={{
+                                padding: "3px 8px",
+                                borderRadius: "20px",
+                                fontSize: "9px",
+                                fontWeight: 700,
+                                letterSpacing: "0.5px",
+                                textTransform: "uppercase",
+                                cursor: "pointer",
+                                border: "1px solid",
+                                background: entry.is_booking
+                                  ? "rgba(204,34,34,0.1)"
+                                  : "rgba(46,204,113,0.1)",
+                                color: entry.is_booking ? "#E57373" : "#2ECC71",
+                                borderColor: entry.is_booking
+                                  ? "rgba(204,34,34,0.28)"
+                                  : "rgba(46,204,113,0.28)",
+                              }}
+                            >
+                              {entry.is_booking ? "BOOKED" : "OPEN"}
+                            </button>
+                            {entry.booking_by && (
+                              <div
+                                style={{
+                                  fontSize: "9px",
+                                  color: "#777",
+                                  marginTop: "2px",
+                                }}
+                              >
+                                {entry.booking_by}
+                              </div>
+                            )}
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: "4px",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <button
+                              className="btn-gs"
+                              onClick={() => openEdit(entry)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="btn-ds"
+                              onClick={() => setDeleteId(entry.id)}
+                            >
+                              Hapus
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div style={{ height: "5px" }} />
+                </div>
+              )}
+            </div>
+          </div>
+        </main>
+
+        {/* Footer */}
+        <div
+          style={{
+            textAlign: "center",
+            padding: "12px 16px",
+            borderTop: "1px solid rgba(201,168,76,0.1)",
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "Oswald, sans-serif",
+              fontSize: "10px",
+              color: "#7A6030",
+              letterSpacing: "1px",
+              textTransform: "uppercase",
+            }}
+          >
+            Bhaypark Mini Soccer · Admin Panel
+          </div>
+          <div style={{ fontSize: "10px", color: "#282828", marginTop: "2px" }}>
+            © {new Date().getFullYear()} Pelayanan Markas Polda Kep. Babel
+          </div>
+        </div>
+      </div>
+
+      {/* ── FORM MODAL ────────────────────────────────────────────────────── */}
       {showForm && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center"
+          className="modal-backdrop"
           onClick={(e) => e.target === e.currentTarget && closeForm()}
         >
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-7 w-full max-w-[440px] mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-6">
+          <div className="modal-card" style={{ maxWidth: "420px" }}>
+            <div className="modal-hd">
               <div>
-                <h2 className="font-mono text-lg font-bold">
+                <div
+                  style={{
+                    fontFamily: "Oswald, sans-serif",
+                    fontSize: "14px",
+                    fontWeight: 700,
+                    color: "#F0CC6E",
+                    textTransform: "uppercase",
+                    letterSpacing: "1px",
+                  }}
+                >
                   {editId ? "Edit Slot" : "Tambah Slot"}
-                </h2>
-                <div className="text-xs text-neutral-500 mt-0.5">
+                </div>
+                <div
+                  style={{ fontSize: "11px", color: "#666", marginTop: "2px" }}
+                >
                   {editId
                     ? `ID #${editId}`
                     : "Bisa tambah lebih dari satu jam sekaligus"}
@@ -520,14 +1551,44 @@ export default function TimetablePage() {
               </div>
               <button
                 onClick={closeForm}
-                className="bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-100 w-8 h-8 rounded-md flex items-center justify-center text-base transition-colors"
+                style={{
+                  width: "29px",
+                  height: "29px",
+                  borderRadius: "7px",
+                  background: "rgba(255,255,255,0.04)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  color: "#666",
+                  fontSize: "16px",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
               >
                 ×
               </button>
             </div>
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs text-neutral-400 font-medium">
+            <form
+              onSubmit={handleSubmit}
+              style={{
+                padding: "16px 18px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "12px",
+              }}
+            >
+              <label
+                style={{ display: "flex", flexDirection: "column", gap: "5px" }}
+              >
+                <span
+                  style={{
+                    fontSize: "10px",
+                    color: "#777",
+                    fontWeight: 600,
+                    letterSpacing: "0.5px",
+                    textTransform: "uppercase",
+                  }}
+                >
                   Tanggal
                 </span>
                 <input
@@ -535,15 +1596,38 @@ export default function TimetablePage() {
                   required
                   value={formDate}
                   onChange={(e) => setFormDate(e.target.value)}
-                  className={inputClass}
+                  className="admin-input"
                 />
               </label>
               <div>
-                <div className="grid grid-cols-[1fr_1fr_32px] gap-2 mb-2">
-                  <span className="text-xs text-neutral-400 font-medium">
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr 32px",
+                    gap: "7px",
+                    marginBottom: "5px",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: "10px",
+                      color: "#777",
+                      fontWeight: 600,
+                      letterSpacing: "0.5px",
+                      textTransform: "uppercase",
+                    }}
+                  >
                     Mulai
                   </span>
-                  <span className="text-xs text-neutral-400 font-medium">
+                  <span
+                    style={{
+                      fontSize: "10px",
+                      color: "#777",
+                      fontWeight: 600,
+                      letterSpacing: "0.5px",
+                      textTransform: "uppercase",
+                    }}
+                  >
                     Selesai
                   </span>
                   <span />
@@ -551,7 +1635,13 @@ export default function TimetablePage() {
                 {slots.map((slot, i) => (
                   <div
                     key={i}
-                    className="grid grid-cols-[1fr_1fr_32px] gap-2 mb-2 items-center"
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr 32px",
+                      gap: "7px",
+                      marginBottom: "7px",
+                      alignItems: "center",
+                    }}
                   >
                     <input
                       type="time"
@@ -560,20 +1650,33 @@ export default function TimetablePage() {
                       onChange={(e) =>
                         updateSlot(i, "time_from", e.target.value)
                       }
-                      className={inputClass}
+                      className="admin-input"
                     />
                     <input
                       type="time"
                       required
                       value={slot.time_to}
                       onChange={(e) => updateSlot(i, "time_to", e.target.value)}
-                      className={inputClass}
+                      className="admin-input"
                     />
                     <button
                       type="button"
                       onClick={() => removeSlot(i)}
                       disabled={slots.length === 1}
-                      className={`w-8 h-[42px] rounded-md border border-neutral-700 bg-neutral-800 text-neutral-400 flex items-center justify-center text-base transition-all flex-shrink-0 ${slots.length === 1 ? "opacity-30 cursor-not-allowed" : "cursor-pointer hover:text-red-400 hover:border-red-400"}`}
+                      style={{
+                        width: "32px",
+                        height: "38px",
+                        borderRadius: "7px",
+                        background: "rgba(204,34,34,0.1)",
+                        border: "1px solid rgba(204,34,34,0.18)",
+                        color: "#E57373",
+                        fontSize: "15px",
+                        cursor: slots.length === 1 ? "not-allowed" : "pointer",
+                        opacity: slots.length === 1 ? 0.3 : 1,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
                     >
                       ×
                     </button>
@@ -583,7 +1686,17 @@ export default function TimetablePage() {
                   <button
                     type="button"
                     onClick={addSlot}
-                    className="w-full border border-dashed border-neutral-700 hover:border-neutral-500 bg-transparent text-neutral-500 hover:text-neutral-200 py-2.5 rounded-lg text-sm transition-all mt-0.5"
+                    style={{
+                      width: "100%",
+                      padding: "8px",
+                      border: "1px dashed rgba(201,168,76,0.26)",
+                      borderRadius: "8px",
+                      background: "transparent",
+                      color: "#7A6030",
+                      fontSize: "12px",
+                      cursor: "pointer",
+                      fontFamily: "Mulish, sans-serif",
+                    }}
                   >
                     + Tambah jam lagi
                   </button>
@@ -591,22 +1704,60 @@ export default function TimetablePage() {
               </div>
               {editId && (
                 <>
-                  <label className="flex items-center gap-2.5 cursor-pointer bg-neutral-800 border border-neutral-700 rounded-lg px-3.5 py-3">
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "9px",
+                      cursor: "pointer",
+                      background: "rgba(201,168,76,0.05)",
+                      border: "1px solid rgba(201,168,76,0.13)",
+                      borderRadius: "9px",
+                      padding: "10px 12px",
+                    }}
+                  >
                     <input
                       type="checkbox"
                       checked={isBooking}
                       onChange={(e) => setIsBooking(e.target.checked)}
-                      className="w-4 h-4 cursor-pointer accent-yellow-400"
+                      style={{
+                        width: "15px",
+                        height: "15px",
+                        cursor: "pointer",
+                        accentColor: "#C9A84C",
+                      }}
                     />
                     <div>
-                      <div className="text-sm font-medium">Is Booking</div>
-                      <div className="text-[11px] text-neutral-500">
+                      <div
+                        style={{
+                          fontSize: "13px",
+                          color: "#EAEAEA",
+                          fontWeight: 600,
+                        }}
+                      >
+                        Is Booking
+                      </div>
+                      <div style={{ fontSize: "10px", color: "#666" }}>
                         Tandai slot ini sudah dipesan
                       </div>
                     </div>
                   </label>
-                  <label className="flex flex-col gap-2 bg-neutral-800 border border-neutral-700 rounded-lg px-3.5 py-3">
-                    <span className="text-sm font-medium text-white">
+                  <label
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "5px",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "10px",
+                        color: "#777",
+                        fontWeight: 600,
+                        letterSpacing: "0.5px",
+                        textTransform: "uppercase",
+                      }}
+                    >
                       Booking By
                     </span>
                     <input
@@ -614,22 +1765,33 @@ export default function TimetablePage() {
                       value={bookingBy ?? ""}
                       onChange={(e) => setBookingBy(e.target.value)}
                       placeholder="Di booking oleh"
-                      className="w-full rounded-md border border-neutral-600 bg-neutral-900 px-3 py-2 text-sm text-white placeholder:text-neutral-500 outline-none transition focus:border-yellow-400"
+                      className="admin-input"
                     />
                   </label>
                 </>
               )}
-              <div className="flex gap-2.5 pt-1">
+              <div style={{ display: "flex", gap: "8px", paddingTop: "3px" }}>
                 <button
                   type="button"
                   onClick={closeForm}
-                  className="flex-1 bg-neutral-800 border border-neutral-700 text-neutral-100 py-2.5 rounded-lg text-sm font-medium hover:bg-neutral-700 transition-colors"
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid rgba(255,255,255,0.07)",
+                    color: "#777",
+                    borderRadius: "8px",
+                    fontSize: "12px",
+                    cursor: "pointer",
+                    fontFamily: "Mulish, sans-serif",
+                  }}
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="flex-[2] bg-yellow-400 hover:bg-yellow-300 text-neutral-950 py-2.5 rounded-lg text-sm font-bold transition-colors"
+                  className="btn-gold"
+                  style={{ flex: 2, padding: "10px", fontSize: "12px" }}
                 >
                   {editId
                     ? "Simpan Perubahan"
@@ -643,143 +1805,299 @@ export default function TimetablePage() {
         </div>
       )}
 
-      {/* ── DELETE CONFIRM ── */}
+      {/* ── DELETE CONFIRM ──────────────────────────────────────────────────── */}
       {deleteId && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-7 w-full max-w-sm mx-4 text-center">
-            <div className="text-3xl mb-3">🗑️</div>
-            <h3 className="text-base font-semibold mb-2">
-              Hapus Slot #{deleteId}?
-            </h3>
-            <p className="text-neutral-500 text-sm mb-6">
-              Data yang dihapus tidak dapat dipulihkan kembali.
-            </p>
-            <div className="flex gap-2.5">
-              <button
-                onClick={() => setDeleteId(null)}
-                className="flex-1 bg-neutral-800 border border-neutral-700 text-neutral-100 py-2.5 rounded-lg text-sm hover:bg-neutral-700 transition-colors"
+        <div className="modal-backdrop">
+          <div
+            className="modal-card"
+            style={{ maxWidth: "300px", textAlign: "center" }}
+          >
+            <div style={{ padding: "24px 20px" }}>
+              <div style={{ fontSize: "28px", marginBottom: "10px" }}>🗑️</div>
+              <div
+                style={{
+                  fontFamily: "Oswald, sans-serif",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  color: "#F0CC6E",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px",
+                  marginBottom: "7px",
+                }}
               >
-                Batal
-              </button>
-              <button
-                onClick={() => handleDelete(deleteId)}
-                className="flex-1 bg-red-500 hover:bg-red-400 text-white py-2.5 rounded-lg text-sm font-bold transition-colors"
+                Hapus Slot #{deleteId}?
+              </div>
+              <p
+                style={{
+                  fontSize: "12px",
+                  color: "#666",
+                  marginBottom: "18px",
+                  lineHeight: 1.5,
+                }}
               >
-                Ya, Hapus
-              </button>
+                Data tidak dapat dipulihkan.
+              </p>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  onClick={() => setDeleteId(null)}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid rgba(255,255,255,0.07)",
+                    color: "#777",
+                    borderRadius: "8px",
+                    fontSize: "12px",
+                    cursor: "pointer",
+                    fontFamily: "Mulish, sans-serif",
+                  }}
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={() => handleDelete(deleteId)}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    background: "#CC2222",
+                    border: "none",
+                    color: "#fff",
+                    borderRadius: "8px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontFamily: "Oswald, sans-serif",
+                    letterSpacing: "1px",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Hapus
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── LOGOUT CONFIRM ── */}
+      {/* ── LOGOUT CONFIRM ──────────────────────────────────────────────────── */}
       {showLogoutConfirm && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-7 w-full max-w-sm mx-4 text-center">
-            <div className="text-3xl mb-3">👋</div>
-            <h3 className="text-base font-semibold mb-2">
-              Keluar dari Panel Admin?
-            </h3>
-            <p className="text-neutral-500 text-sm mb-6">
-              Sesi Anda akan diakhiri.
-            </p>
-            <div className="flex gap-2.5">
-              <button
-                onClick={() => setShowLogoutConfirm(false)}
-                className="flex-1 bg-neutral-800 border border-neutral-700 text-neutral-100 py-2.5 rounded-lg text-sm hover:bg-neutral-700 transition-colors"
+        <div className="modal-backdrop">
+          <div
+            className="modal-card"
+            style={{ maxWidth: "300px", textAlign: "center" }}
+          >
+            <div style={{ padding: "24px 20px" }}>
+              <div style={{ fontSize: "28px", marginBottom: "10px" }}>👋</div>
+              <div
+                style={{
+                  fontFamily: "Oswald, sans-serif",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  color: "#F0CC6E",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px",
+                  marginBottom: "7px",
+                }}
               >
-                Batal
-              </button>
-              <button
-                onClick={handleLogout}
-                className="flex-1 bg-red-500 hover:bg-red-400 text-white py-2.5 rounded-lg text-sm font-bold transition-colors"
+                Keluar dari Admin?
+              </div>
+              <p
+                style={{
+                  fontSize: "12px",
+                  color: "#666",
+                  marginBottom: "18px",
+                }}
               >
-                Ya, Logout
-              </button>
+                Sesi Anda akan diakhiri.
+              </p>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  onClick={() => setShowLogoutConfirm(false)}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid rgba(255,255,255,0.07)",
+                    color: "#777",
+                    borderRadius: "8px",
+                    fontSize: "12px",
+                    cursor: "pointer",
+                    fontFamily: "Mulish, sans-serif",
+                  }}
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={handleLogout}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    background: "#CC2222",
+                    border: "none",
+                    color: "#fff",
+                    borderRadius: "8px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontFamily: "Oswald, sans-serif",
+                    letterSpacing: "1px",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Logout
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── CHANGE PASSWORD ── */}
+      {/* ── CHANGE PASSWORD ─────────────────────────────────────────────────── */}
       {showChangePassword && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center"
+          className="modal-backdrop"
           onClick={(e) =>
             e.target === e.currentTarget && setShowChangePassword(false)
           }
         >
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-7 w-full max-w-[400px] mx-4">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="font-mono text-base font-bold">Ganti Password</h2>
+          <div className="modal-card" style={{ maxWidth: "360px" }}>
+            <div className="modal-hd">
+              <div
+                style={{
+                  fontFamily: "Oswald, sans-serif",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  color: "#F0CC6E",
+                  textTransform: "uppercase",
+                  letterSpacing: "1px",
+                }}
+              >
+                Ganti Password
+              </div>
               <button
                 onClick={() => setShowChangePassword(false)}
-                className="bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-100 w-8 h-8 rounded-md flex items-center justify-center text-base transition-colors"
+                style={{
+                  width: "29px",
+                  height: "29px",
+                  borderRadius: "7px",
+                  background: "rgba(255,255,255,0.04)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  color: "#666",
+                  fontSize: "16px",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
               >
                 ×
               </button>
             </div>
             <form
               onSubmit={handleChangePassword}
-              className="flex flex-col gap-4"
+              style={{
+                padding: "16px 18px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "12px",
+              }}
             >
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs text-neutral-400 font-medium">
-                  Password Saat Ini
-                </span>
-                <input
-                  type="password"
-                  required
-                  value={cpCurrent}
-                  onChange={(e) => setCpCurrent(e.target.value)}
-                  className={inputClass}
-                  placeholder="••••••••"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs text-neutral-400 font-medium">
-                  Password Baru
-                </span>
-                <input
-                  type="password"
-                  required
-                  value={cpNew}
-                  onChange={(e) => setCpNew(e.target.value)}
-                  className={inputClass}
-                  placeholder="Min. 6 karakter"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs text-neutral-400 font-medium">
-                  Konfirmasi Password Baru
-                </span>
-                <input
-                  type="password"
-                  required
-                  value={cpConfirm}
-                  onChange={(e) => setCpConfirm(e.target.value)}
-                  className={inputClass}
-                  placeholder="Ulangi password baru"
-                />
-              </label>
+              {[
+                {
+                  l: "Password Saat Ini",
+                  v: cpCurrent,
+                  s: setCpCurrent,
+                  p: "••••••••",
+                },
+                {
+                  l: "Password Baru",
+                  v: cpNew,
+                  s: setCpNew,
+                  p: "Min. 6 karakter",
+                },
+                {
+                  l: "Konfirmasi Password Baru",
+                  v: cpConfirm,
+                  s: setCpConfirm,
+                  p: "Ulangi password baru",
+                },
+              ].map((f) => (
+                <label
+                  key={f.l}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "5px",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: "10px",
+                      color: "#777",
+                      fontWeight: 600,
+                      letterSpacing: "0.5px",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {f.l}
+                  </span>
+                  <input
+                    type="password"
+                    required
+                    value={f.v}
+                    onChange={(e) => f.s(e.target.value)}
+                    placeholder={f.p}
+                    className="admin-input"
+                  />
+                </label>
+              ))}
               {cpError && (
-                <div className="bg-red-950 border border-red-400/30 text-red-400 text-xs px-3.5 py-2.5 rounded-lg">
+                <div
+                  style={{
+                    background: "rgba(204,34,34,0.09)",
+                    border: "1px solid rgba(204,34,34,0.26)",
+                    color: "#E57373",
+                    fontSize: "12px",
+                    padding: "9px 12px",
+                    borderRadius: "8px",
+                  }}
+                >
                   {cpError}
                 </div>
               )}
-              <div className="flex gap-2.5 pt-1">
+              <div style={{ display: "flex", gap: "8px", paddingTop: "3px" }}>
                 <button
                   type="button"
                   onClick={() => setShowChangePassword(false)}
-                  className="flex-1 bg-neutral-800 border border-neutral-700 text-neutral-100 py-2.5 rounded-lg text-sm font-medium hover:bg-neutral-700 transition-colors"
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid rgba(255,255,255,0.07)",
+                    color: "#777",
+                    borderRadius: "8px",
+                    fontSize: "12px",
+                    cursor: "pointer",
+                    fontFamily: "Mulish, sans-serif",
+                  }}
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
                   disabled={cpLoading}
-                  className="flex-[2] bg-yellow-400 hover:bg-yellow-300 text-neutral-950 py-2.5 rounded-lg text-sm font-bold transition-colors disabled:opacity-60"
+                  className="btn-gold"
+                  style={{
+                    flex: 2,
+                    padding: "10px",
+                    fontSize: "12px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "7px",
+                  }}
                 >
+                  {cpLoading && <Spinner size={12} color="#1a0f00" />}
                   {cpLoading ? "Menyimpan..." : "Simpan Password"}
                 </button>
               </div>
@@ -788,14 +2106,37 @@ export default function TimetablePage() {
         </div>
       )}
 
-      {/* Toast */}
+      {/* ── TOAST ─────────────────────────────────────────────────────────── */}
       {toast && (
         <div
-          className={`fixed bottom-6 right-6 z-[100] px-4 py-3 rounded-lg text-sm font-medium shadow-xl border transition-all ${toast.type === "ok" ? "bg-neutral-900 border-green-400/50 text-green-400" : "bg-red-950 border-red-400/50 text-red-400"}`}
+          style={{
+            position: "fixed",
+            bottom: "16px",
+            right: "14px",
+            zIndex: 100,
+            padding: "10px 14px",
+            borderRadius: "10px",
+            fontSize: "12px",
+            fontWeight: 600,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+            background: toast.type === "ok" ? "#111" : "rgba(204,34,34,0.14)",
+            border:
+              toast.type === "ok"
+                ? "1px solid rgba(46,204,113,0.35)"
+                : "1px solid rgba(204,34,34,0.35)",
+            color: toast.type === "ok" ? "#2ECC71" : "#E57373",
+            animation: "slideUp 0.18s ease",
+            display: "flex",
+            alignItems: "center",
+            gap: "7px",
+          }}
         >
+          <span style={{ fontSize: "14px" }}>
+            {toast.type === "ok" ? "✓" : "✕"}
+          </span>
           {toast.msg}
         </div>
       )}
-    </div>
+    </>
   );
 }

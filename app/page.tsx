@@ -4,7 +4,6 @@ import Link from "next/dist/client/link";
 import { useState, useEffect, useCallback } from "react";
 import { format } from "date-fns";
 
-// --- TYPES ---
 type Timetable = {
   id: number;
   date: string;
@@ -15,12 +14,7 @@ type Timetable = {
   created_at: string;
   updated_at: string;
 };
-
-// Ringkasan per tanggal untuk warna dot di kalender
-type DaySummary = {
-  hasAvailable: boolean;
-  hasBooked: boolean;
-};
+type DaySummary = { hasAvailable: boolean; hasBooked: boolean };
 
 const MONTH_NAMES = [
   "Januari",
@@ -37,31 +31,66 @@ const MONTH_NAMES = [
   "Desember",
 ];
 const DAY_NAMES = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
-
 const SESSION_KEY = "bhaypark_confirmed";
 
 function formatTime(t: string) {
   return t?.slice(0, 5) ?? "";
 }
 
-// --- MAIN PAGE ---
+function Skeleton({
+  w = "100%",
+  h = "14px",
+  r = "6px",
+  mb = "0px",
+}: {
+  w?: string;
+  h?: string;
+  r?: string;
+  mb?: string;
+}) {
+  return (
+    <div
+      style={{
+        width: w,
+        height: h,
+        borderRadius: r,
+        background: "rgba(201,168,76,0.07)",
+        marginBottom: mb,
+        animation: "pulse 1.6s ease-in-out infinite",
+      }}
+    />
+  );
+}
+
+function Spinner({ size = 13 }: { size?: number }) {
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        border: "2px solid rgba(201,168,76,0.15)",
+        borderTopColor: "#C9A84C",
+        animation: "spin 0.65s linear infinite",
+        flexShrink: 0,
+      }}
+    />
+  );
+}
+
 export default function Page() {
   const today = new Date();
-  const todayStr = format(today, "yyyy-MM-dd");
 
   const [currentYear, setCurrentYear] = useState(today.getFullYear());
   const [currentMonth, setCurrentMonth] = useState(today.getMonth());
-
-  // Default selected = hari ini
   const [selectedDate, setSelectedDate] = useState<number | null>(
     today.getDate(),
   );
 
-  // Data slot untuk tanggal yang dipilih
   const [daySlots, setDaySlots] = useState<Timetable[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
+  const [initialLoad, setInitialLoad] = useState(true); // very first page load
 
-  // Summary per tanggal dalam bulan aktif (untuk dot kalender)
   const [monthSummary, setMonthSummary] = useState<Record<number, DaySummary>>(
     {},
   );
@@ -76,49 +105,29 @@ export default function Page() {
     if (confirmed === "true") setHasConfirmedSession(true);
   }, []);
 
-  // Fetch summary seluruh bulan aktif untuk dot kalender
   const fetchMonthSummary = useCallback(async () => {
     setLoadingMonth(true);
     try {
-      // Ambil semua slot di bulan ini: gunakan range tahun-bulan
-      const yearStr = String(currentYear);
-      const monthStr = String(currentMonth + 1).padStart(2, "0");
-      // Fetch semua data lalu filter client-side berdasarkan bulan
-      const res = await fetch(`/api/timetable?month=${yearStr}-${monthStr}`);
+      const ym = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
+      const res = await fetch(`/api/timetable?month=${ym}`);
       const json = await res.json();
-
-      if (json.success && Array.isArray(json.data)) {
-        const summary: Record<number, DaySummary> = {};
-        (json.data as Timetable[]).forEach((entry) => {
-          const dateOnly = entry.date.slice(0, 10);
-          const [y, m, d] = dateOnly.split("-").map(Number);
-          if (y === currentYear && m === currentMonth + 1) {
-            if (!summary[d])
-              summary[d] = { hasAvailable: false, hasBooked: false };
-            if (entry.is_booking) summary[d].hasBooked = true;
-            else summary[d].hasAvailable = true;
-          }
-        });
-        setMonthSummary(summary);
-      } else {
-        // Fallback: jika API tidak support ?month=, fetch all dan filter
-        const resAll = await fetch(`/api/timetable`);
-        const jsonAll = await resAll.json();
-        if (jsonAll.success && Array.isArray(jsonAll.data)) {
-          const summary: Record<number, DaySummary> = {};
-          (jsonAll.data as Timetable[]).forEach((entry) => {
-            const dateOnly = entry.date.slice(0, 10);
-            const [y, m, d] = dateOnly.split("-").map(Number);
-            if (y === currentYear && m === currentMonth + 1) {
-              if (!summary[d])
-                summary[d] = { hasAvailable: false, hasBooked: false };
-              if (entry.is_booking) summary[d].hasBooked = true;
-              else summary[d].hasAvailable = true;
-            }
-          });
-          setMonthSummary(summary);
-        }
+      const summary: Record<number, DaySummary> = {};
+      let data: Timetable[] =
+        json.success && json.data?.length ? json.data : [];
+      if (!data.length) {
+        const fallback = await fetch("/api/timetable").then((r) => r.json());
+        data = fallback.success ? fallback.data : [];
       }
+      data.forEach((entry: Timetable) => {
+        const [y, m, d] = entry.date.slice(0, 10).split("-").map(Number);
+        if (y === currentYear && m === currentMonth + 1) {
+          if (!summary[d])
+            summary[d] = { hasAvailable: false, hasBooked: false };
+          if (entry.is_booking) summary[d].hasBooked = true;
+          else summary[d].hasAvailable = true;
+        }
+      });
+      setMonthSummary(summary);
     } catch {
       setMonthSummary({});
     } finally {
@@ -130,7 +139,6 @@ export default function Page() {
     fetchMonthSummary();
   }, [fetchMonthSummary]);
 
-  // Fetch slot detail untuk tanggal yang dipilih
   const fetchDaySlots = useCallback(
     async (day: number, year: number, month: number) => {
       setLoadingSlots(true);
@@ -140,29 +148,27 @@ export default function Page() {
         const res = await fetch(`/api/timetable?date=${dateStr}`);
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
-          // Sort by time_from
-          const sorted = [...(json.data as Timetable[])].sort((a, b) =>
-            a.time_from.localeCompare(b.time_from),
+          setDaySlots(
+            [...(json.data as Timetable[])].sort((a, b) =>
+              a.time_from.localeCompare(b.time_from),
+            ),
           );
-          setDaySlots(sorted);
         }
       } catch {
         setDaySlots([]);
       } finally {
         setLoadingSlots(false);
+        setInitialLoad(false);
       }
     },
     [],
   );
 
-  // Fetch otomatis saat selectedDate / bulan berubah
   useEffect(() => {
-    if (selectedDate !== null) {
+    if (selectedDate !== null)
       fetchDaySlots(selectedDate, currentYear, currentMonth);
-    }
   }, [selectedDate, currentYear, currentMonth, fetchDaySlots]);
 
-  // Juga fetch hari ini saat mount
   useEffect(() => {
     fetchDaySlots(today.getDate(), today.getFullYear(), today.getMonth());
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -174,13 +180,14 @@ export default function Page() {
   const handleDateClick = (day: number) => {
     if (hasConfirmedSession) {
       setSelectedDate(day);
-      if (window.innerWidth < 1024) {
-        setTimeout(() => {
-          document
-            .getElementById("detail-section")
-            ?.scrollIntoView({ behavior: "smooth" });
-        }, 100);
-      }
+      if (window.innerWidth < 1024)
+        setTimeout(
+          () =>
+            document
+              .getElementById("detail-section")
+              ?.scrollIntoView({ behavior: "smooth" }),
+          100,
+        );
     } else {
       setPendingDate(day);
       setShowConfirm(true);
@@ -193,13 +200,14 @@ export default function Page() {
     setSelectedDate(pendingDate);
     setShowConfirm(false);
     setPendingDate(null);
-    if (window.innerWidth < 1024) {
-      setTimeout(() => {
-        document
-          .getElementById("detail-section")
-          ?.scrollIntoView({ behavior: "smooth" });
-      }, 100);
-    }
+    if (window.innerWidth < 1024)
+      setTimeout(
+        () =>
+          document
+            .getElementById("detail-section")
+            ?.scrollIntoView({ behavior: "smooth" }),
+        100,
+      );
   };
 
   const handleCancel = () => {
@@ -214,7 +222,6 @@ export default function Page() {
       setCurrentYear((y) => y - 1);
     } else setCurrentMonth((m) => m - 1);
   };
-
   const nextMonth = () => {
     setSelectedDate(null);
     if (currentMonth === 11) {
@@ -223,200 +230,428 @@ export default function Page() {
     } else setCurrentMonth((m) => m + 1);
   };
 
-  const tersediaCount = daySlots.filter((s) => !s.is_booking).length;
-  const terisiCount = daySlots.filter((s) => s.is_booking).length;
-
-  // Helper: apakah dot kalender "tersedia" (ada slot open) atau "penuh" (semua booked / tidak ada data)
   const getDayStatus = (day: number): "tersedia" | "penuh" | "unknown" => {
     const s = monthSummary[day];
     if (!s) return "unknown";
-    if (s.hasAvailable) return "tersedia";
-    return "penuh";
+    return s.hasAvailable ? "tersedia" : "penuh";
   };
+
+  const tersediaCount = daySlots.filter((s) => !s.is_booking).length;
+  const terisiCount = daySlots.filter((s) => s.is_booking).length;
 
   return (
     <>
-      {/* Google Fonts */}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Mulish:wght@300;400;500;600&display=swap');
-        body { font-family: 'Mulish', sans-serif; }
-        .font-oswald { font-family: 'Oswald', sans-serif; }
+        *{box-sizing:border-box;margin:0}
+        body{font-family:'Mulish',sans-serif}
+        .font-oswald{font-family:'Oswald',sans-serif}
+        @keyframes pulse{0%,100%{opacity:0.35}50%{opacity:0.85}}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+        @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
       `}</style>
 
-      <div className="bg-[#0A0A0A] min-h-screen text-[#EAEAEA]">
+      <div
+        style={{ background: "#0A0A0A", minHeight: "100vh", color: "#EAEAEA" }}
+      >
         {/* HEADER */}
         <div
-          className="relative overflow-hidden text-center px-5 pt-7 pb-5 border-b border-[rgba(201,168,76,0.25)]"
           style={{
-            background: "linear-gradient(180deg, #1a0f00 0%, #0A0A0A 100%)",
+            position: "relative",
+            overflow: "hidden",
+            textAlign: "center",
+            padding: "28px 20px 20px",
+            borderBottom: "1px solid rgba(201,168,76,0.25)",
+            background: "linear-gradient(180deg,#1a0f00 0%,#0A0A0A 100%)",
           }}
         >
           <div
-            className="absolute inset-0 pointer-events-none"
             style={{
+              position: "absolute",
+              inset: 0,
+              pointerEvents: "none",
               background:
-                "radial-gradient(ellipse at 50% 0%, rgba(201,168,76,0.08) 0%, transparent 70%)",
+                "radial-gradient(ellipse at 50% 0%,rgba(201,168,76,0.08) 0%,transparent 70%)",
             }}
           />
           <span
-            className="inline-block text-[#1a0f00] font-oswald text-[10px] font-bold tracking-[2px] uppercase px-3.5 py-1 rounded-sm mb-2.5"
             style={{
-              background: "linear-gradient(135deg, #C9A84C, #F0CC6E, #C9A84C)",
+              display: "inline-block",
+              background: "linear-gradient(135deg,#C9A84C,#F0CC6E,#C9A84C)",
+              color: "#1a0f00",
+              fontFamily: "Oswald, sans-serif",
+              fontSize: "9px",
+              fontWeight: 700,
+              letterSpacing: "2px",
+              textTransform: "uppercase",
+              padding: "4px 12px",
+              borderRadius: "3px",
+              marginBottom: "10px",
             }}
           >
             Kepolisian Negara Republik Indonesia Daerah Kepulauan Bangka
             Belitung Pelayanan Markas
           </span>
-          <div className="font-oswald text-2xl font-bold text-[#F0CC6E] tracking-wide uppercase leading-tight">
+          <div
+            style={{
+              fontFamily: "Oswald, sans-serif",
+              fontSize: "22px",
+              fontWeight: 700,
+              color: "#F0CC6E",
+              letterSpacing: "1px",
+              textTransform: "uppercase",
+              lineHeight: 1.2,
+            }}
+          >
             Bhaypark Mini Soccer
           </div>
           <Link
             href="/admin/login"
-            className="inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-[1px] uppercase px-3 py-1 rounded border border-[rgba(201,168,76,0.35)] text-[#C9A84C] hover:bg-[rgba(201,168,76,0.1)] transition-colors mt-1"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "5px",
+              fontSize: "10px",
+              fontWeight: 600,
+              letterSpacing: "1px",
+              textTransform: "uppercase",
+              padding: "5px 11px",
+              borderRadius: "5px",
+              border: "1px solid rgba(201,168,76,0.35)",
+              color: "#C9A84C",
+              textDecoration: "none",
+              marginTop: "8px",
+              transition: "background 0.2s",
+            }}
           >
             🔒 Admin Login
           </Link>
         </div>
 
-        {/* CONTENT WRAPPER */}
+        {/* CONTENT */}
         <div
-          className="
-          max-w-120 mx-auto pb-20
-          lg:max-w-none lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.4fr)] lg:items-start lg:gap-0
-          lg:px-8 lg:pb-16 lg:pt-2
-        "
+          style={{
+            maxWidth: "1200px",
+            margin: "0 auto",
+            paddingBottom: "80px",
+          }}
+          className="content-grid"
         >
+          <style>{`
+            .content-grid {
+              display: grid;
+              grid-template-columns: 1fr;
+            }
+            @media(min-width:1024px){
+              .content-grid {
+                grid-template-columns: minmax(0,1fr) minmax(0,1.6fr) minmax(0,1.4fr);
+                align-items: start;
+                padding: 8px 32px 64px;
+              }
+            }
+            .col-rules { padding: 20px 16px; }
+            .col-calendar { padding: 20px 16px; }
+            .col-detail { padding: 20px 16px; }
+            @media(min-width:1024px){
+              .col-rules { padding: 24px 16px; border-right: 1px solid rgba(201,168,76,0.15); }
+              .col-calendar { padding: 24px 24px; border-right: 1px solid rgba(201,168,76,0.15); }
+              .col-detail { padding: 24px 24px; position: sticky; top: 16px; }
+            }
+          `}</style>
+
           {/* ── COL 1: RULES ── */}
-          <div className="px-4 py-5 lg:py-6 lg:px-4 lg:border-r lg:border-[rgba(201,168,76,0.15)]">
+          <div className="col-rules">
             <SectionTitle>Tata Tertib Lapangan</SectionTitle>
-            <div className="rounded-xl overflow-hidden border border-[rgba(201,168,76,0.25)] shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
+            <div
+              style={{
+                borderRadius: "12px",
+                overflow: "hidden",
+                border: "1px solid rgba(201,168,76,0.25)",
+                boxShadow: "0 4px 30px rgba(0,0,0,0.5)",
+              }}
+            >
               <img
                 src="/MainRules.jpeg"
                 alt="Tata Tertib Bhaypark Mini Soccer"
-                className="w-full block"
+                style={{ width: "100%", display: "block" }}
               />
             </div>
           </div>
 
-          {/* Gold divider (mobile only) */}
+          {/* Mobile divider */}
           <div
-            className="mx-5 h-px lg:hidden"
             style={{
+              height: "1px",
               background:
-                "linear-gradient(90deg, transparent, #7A6030, transparent)",
+                "linear-gradient(90deg,transparent,#7A6030,transparent)",
+              margin: "0 20px",
             }}
+            className="mobile-divider"
           />
+          <style>{`.mobile-divider{display:block}@media(min-width:1024px){.mobile-divider{display:none}}`}</style>
 
           {/* ── COL 2: CALENDAR ── */}
-          <div className="px-4 py-5 lg:py-6 lg:px-6 lg:border-r lg:border-[rgba(201,168,76,0.15)]">
+          <div className="col-calendar">
             <SectionTitle>Kalender Booking</SectionTitle>
-            <div className="bg-[#111111] border border-[rgba(201,168,76,0.25)] rounded-xl overflow-hidden">
-              {/* Nav Header */}
+            <div
+              style={{
+                background: "#111111",
+                border: "1px solid rgba(201,168,76,0.25)",
+                borderRadius: "14px",
+                overflow: "hidden",
+              }}
+            >
+              {/* Nav */}
               <div
-                className="flex items-center justify-between px-4.5 py-3.5 border-b border-[rgba(201,168,76,0.25)]"
                 style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "12px 16px",
+                  borderBottom: "1px solid rgba(201,168,76,0.2)",
                   background:
-                    "linear-gradient(90deg, rgba(201,168,76,0.05), transparent)",
+                    "linear-gradient(90deg,rgba(201,168,76,0.05),transparent)",
                 }}
               >
                 <button
                   onClick={prevMonth}
-                  className="w-8 h-8 flex items-center justify-center rounded-md text-[#C9A84C] text-lg cursor-pointer transition-colors bg-[rgba(201,168,76,0.1)] border border-[rgba(201,168,76,0.25)] hover:bg-[rgba(201,168,76,0.2)]"
+                  style={{
+                    width: "32px",
+                    height: "32px",
+                    borderRadius: "8px",
+                    background: "rgba(201,168,76,0.1)",
+                    border: "1px solid rgba(201,168,76,0.25)",
+                    color: "#C9A84C",
+                    fontSize: "18px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
                 >
                   ‹
                 </button>
-                <span className="font-oswald text-base font-semibold text-[#F0CC6E] tracking-[0.5px]">
-                  {MONTH_NAMES[currentMonth]} {currentYear}
-                </span>
+                <div
+                  style={{ display: "flex", alignItems: "center", gap: "8px" }}
+                >
+                  {loadingMonth && <Spinner />}
+                  <span
+                    style={{
+                      fontFamily: "Oswald, sans-serif",
+                      fontSize: "15px",
+                      fontWeight: 600,
+                      color: "#F0CC6E",
+                      letterSpacing: "0.5px",
+                    }}
+                  >
+                    {MONTH_NAMES[currentMonth]} {currentYear}
+                  </span>
+                </div>
                 <button
                   onClick={nextMonth}
-                  className="w-8 h-8 flex items-center justify-center rounded-md text-[#C9A84C] text-lg cursor-pointer transition-colors bg-[rgba(201,168,76,0.1)] border border-[rgba(201,168,76,0.25)] hover:bg-[rgba(201,168,76,0.2)]"
+                  style={{
+                    width: "32px",
+                    height: "32px",
+                    borderRadius: "8px",
+                    background: "rgba(201,168,76,0.1)",
+                    border: "1px solid rgba(201,168,76,0.25)",
+                    color: "#C9A84C",
+                    fontSize: "18px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
                 >
                   ›
                 </button>
               </div>
 
-              {/* Day Names */}
-              <div className="grid grid-cols-7 px-3 pt-2.5 pb-1">
+              {/* Day names */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(7,1fr)",
+                  padding: "10px 12px 4px",
+                }}
+              >
                 {DAY_NAMES.map((d) => (
                   <div
                     key={d}
-                    className="text-center text-[10px] font-bold tracking-[1px] text-[#888] uppercase"
+                    style={{
+                      textAlign: "center",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      letterSpacing: "1px",
+                      color: "#888",
+                      textTransform: "uppercase",
+                    }}
                   >
                     {d}
                   </div>
                 ))}
               </div>
 
-              {/* Grid */}
-              <div className="grid grid-cols-7 gap-1 px-3 pb-3.5 pt-1">
+              {/* Day grid */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(7,1fr)",
+                  gap: "3px",
+                  padding: "4px 12px 12px",
+                }}
+              >
                 {Array.from({ length: firstDay }).map((_, i) => (
                   <div key={`e-${i}`} />
                 ))}
                 {Array.from({ length: daysInMonth }).map((_, i) => {
                   const day = i + 1;
                   const status = getDayStatus(day);
-                  const hasAvail =
-                    status === "tersedia" ||
-                    (status === "unknown" && !loadingMonth);
                   const isToday =
                     day === today.getDate() &&
                     currentMonth === today.getMonth() &&
                     currentYear === today.getFullYear();
-                  const isSelected = selectedDate === day;
-
+                  const isSel = selectedDate === day;
+                  const bg = isSel
+                    ? "rgba(201,168,76,0.15)"
+                    : status === "tersedia"
+                      ? "rgba(46,204,113,0.12)"
+                      : status === "penuh"
+                        ? "rgba(204,34,34,0.12)"
+                        : "rgba(100,100,100,0.08)";
+                  const bc = isSel
+                    ? "#C9A84C"
+                    : status === "tersedia"
+                      ? "rgba(46,204,113,0.2)"
+                      : status === "penuh"
+                        ? "rgba(204,34,34,0.2)"
+                        : "rgba(100,100,100,0.15)";
+                  const tc = isSel
+                    ? "#F0CC6E"
+                    : status === "tersedia"
+                      ? "#2ECC71"
+                      : status === "penuh"
+                        ? "#E57373"
+                        : "#666";
+                  const dc =
+                    status === "tersedia"
+                      ? "#2ECC71"
+                      : status === "penuh"
+                        ? "#E57373"
+                        : "#444";
                   return (
                     <div
                       key={day}
                       onClick={() => handleDateClick(day)}
-                      className={[
-                        "aspect-square rounded-lg flex flex-col items-center justify-center cursor-pointer transition-all relative border",
-                        "hover:scale-105 hover:z-10",
-                        status === "unknown"
-                          ? "bg-[rgba(100,100,100,0.08)] border-[rgba(100,100,100,0.15)] hover:bg-[rgba(100,100,100,0.15)]"
-                          : hasAvail
-                            ? "bg-[rgba(46,204,113,0.12)] border-[rgba(46,204,113,0.2)] hover:bg-[rgba(46,204,113,0.2)] hover:border-[rgba(46,204,113,0.5)]"
-                            : "bg-[rgba(204,34,34,0.12)] border-[rgba(204,34,34,0.2)] hover:bg-[rgba(204,34,34,0.2)] hover:border-[rgba(204,34,34,0.4)]",
-                        isToday ? "shadow-[0_0_0_2px_#C9A84C]" : "",
-                        isSelected
-                          ? "bg-[rgba(201,168,76,0.15)]! border-[#C9A84C]! shadow-[0_0_0_2px_#F0CC6E]"
-                          : "",
-                      ].join(" ")}
+                      style={{
+                        aspectRatio: "1",
+                        borderRadius: "8px",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        cursor: "pointer",
+                        transition: "all 0.13s",
+                        border: `1px solid ${bc}`,
+                        background: bg,
+                        boxShadow: isSel
+                          ? "0 0 0 2px #F0CC6E"
+                          : isToday
+                            ? "0 0 0 2px #C9A84C"
+                            : "none",
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLDivElement).style.transform =
+                          "scale(1.08)";
+                        (e.currentTarget as HTMLDivElement).style.zIndex = "2";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLDivElement).style.transform =
+                          "scale(1)";
+                        (e.currentTarget as HTMLDivElement).style.zIndex = "0";
+                      }}
                     >
                       <span
-                        className={[
-                          "font-oswald text-sm font-medium leading-none",
-                          isSelected
-                            ? "text-[#F0CC6E]"
-                            : status === "unknown"
-                              ? "text-[#666]"
-                              : hasAvail
-                                ? "text-[#2ECC71]"
-                                : "text-[#E57373]",
-                        ].join(" ")}
+                        style={{
+                          fontFamily: "Oswald, sans-serif",
+                          fontSize: "13px",
+                          fontWeight: 600,
+                          color: tc,
+                          lineHeight: 1,
+                        }}
                       >
                         {day}
                       </span>
-                      <span
-                        className={[
-                          "w-1 h-1 rounded-full mt-0.5",
-                          status === "unknown"
-                            ? "bg-[#444]"
-                            : hasAvail
-                              ? "bg-[#2ECC71]"
-                              : "bg-[#E57373]",
-                        ].join(" ")}
-                      />
+                      {loadingMonth ? (
+                        <span
+                          style={{
+                            width: "4px",
+                            height: "4px",
+                            borderRadius: "50%",
+                            background: "rgba(201,168,76,0.2)",
+                            marginTop: "2px",
+                            animation: "pulse 1.6s infinite",
+                          }}
+                        />
+                      ) : (
+                        <span
+                          style={{
+                            width: "4px",
+                            height: "4px",
+                            borderRadius: "50%",
+                            background: dc,
+                            marginTop: "2px",
+                          }}
+                        />
+                      )}
                     </div>
                   );
                 })}
               </div>
 
               {/* Legend */}
-              <div className="flex gap-4 px-3 pb-3.5 justify-center">
-                <LegendItem color="#2ECC71" label="Tersedia" />
-                <LegendItem color="#E57373" label="Penuh" />
-                <LegendItem color="#C9A84C" label="Hari Ini" outlined />
+              <div
+                style={{
+                  display: "flex",
+                  gap: "14px",
+                  padding: "0 12px 12px",
+                  justifyContent: "center",
+                }}
+              >
+                {[
+                  { color: "#2ECC71", label: "Tersedia" },
+                  { color: "#E57373", label: "Penuh" },
+                  { color: "#C9A84C", label: "Hari Ini", o: true },
+                ].map((l) => (
+                  <div
+                    key={l.label}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      fontSize: "11px",
+                      color: "#888",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: "7px",
+                        height: "7px",
+                        borderRadius: "50%",
+                        background: l.color,
+                        display: "inline-block",
+                        ...(l.o
+                          ? {
+                              outline: `2px solid ${l.color}`,
+                              outlineOffset: "1px",
+                            }
+                          : {}),
+                      }}
+                    />
+                    {l.label}
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -424,74 +659,175 @@ export default function Page() {
           {/* ── COL 3: DETAIL ── */}
           <div
             id="detail-section"
-            className={[
-              "px-4 py-5 lg:py-6 lg:px-6 lg:block lg:sticky lg:top-4",
-              !selectedDate ? "hidden lg:block" : "",
-            ].join(" ")}
+            className="col-detail"
+            style={{ display: selectedDate || true ? undefined : "none" }}
           >
+            <style>{`@media(max-width:1023px){.detail-hidden-mobile{display:none}}`}</style>
             <SectionTitle>Detail Jadwal</SectionTitle>
 
             {selectedDate ? (
-              <div className="bg-[#111111] border border-[rgba(201,168,76,0.25)] rounded-xl overflow-hidden">
+              <div
+                style={{
+                  background: "#111111",
+                  border: "1px solid rgba(201,168,76,0.25)",
+                  borderRadius: "14px",
+                  overflow: "hidden",
+                }}
+              >
                 {/* Detail header */}
                 <div
-                  className="flex items-center justify-between px-4.5 py-3.5 border-b border-[rgba(201,168,76,0.25)]"
                   style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "12px 16px",
+                    borderBottom: "1px solid rgba(201,168,76,0.2)",
                     background:
-                      "linear-gradient(90deg, rgba(201,168,76,0.08), transparent)",
+                      "linear-gradient(90deg,rgba(201,168,76,0.08),transparent)",
                   }}
                 >
-                  <span className="font-oswald text-[15px] font-semibold text-[#F0CC6E]">
+                  <span
+                    style={{
+                      fontFamily: "Oswald, sans-serif",
+                      fontSize: "14px",
+                      fontWeight: 600,
+                      color: "#F0CC6E",
+                    }}
+                  >
                     {selectedDate} {MONTH_NAMES[currentMonth]} {currentYear}
                   </span>
-                  <div className="flex gap-2.5">
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[rgba(46,204,113,0.12)] text-[#2ECC71] border border-[rgba(46,204,113,0.2)]">
-                      {tersediaCount} slot
-                    </span>
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[rgba(204,34,34,0.12)] text-[#E57373] border border-[rgba(204,34,34,0.2)]">
-                      {terisiCount} terisi
-                    </span>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "8px",
+                      alignItems: "center",
+                    }}
+                  >
+                    {loadingSlots ? (
+                      <Spinner />
+                    ) : (
+                      <>
+                        <span
+                          style={{
+                            fontSize: "10px",
+                            fontWeight: 700,
+                            padding: "3px 8px",
+                            borderRadius: "20px",
+                            background: "rgba(46,204,113,0.12)",
+                            color: "#2ECC71",
+                            border: "1px solid rgba(46,204,113,0.2)",
+                          }}
+                        >
+                          {tersediaCount} slot
+                        </span>
+                        <span
+                          style={{
+                            fontSize: "10px",
+                            fontWeight: 700,
+                            padding: "3px 8px",
+                            borderRadius: "20px",
+                            background: "rgba(204,34,34,0.12)",
+                            color: "#E57373",
+                            border: "1px solid rgba(204,34,34,0.2)",
+                          }}
+                        >
+                          {terisiCount} terisi
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
 
-                <div className="p-3 flex flex-col gap-2">
+                <div style={{ padding: "10px 10px 6px" }}>
                   {loadingSlots ? (
-                    <div className="py-8 text-center text-[#555] text-sm">
-                      Memuat jadwal...
-                    </div>
+                    // Skeleton slots
+                    [1, 2, 3].map((i) => (
+                      <div
+                        key={i}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "12px 13px",
+                          borderRadius: "10px",
+                          border: "1px solid rgba(255,255,255,0.04)",
+                          background: "rgba(255,255,255,0.015)",
+                          marginBottom: "8px",
+                        }}
+                      >
+                        <div style={{ flex: 1 }}>
+                          <Skeleton w="110px" h="14px" mb="5px" />
+                          <Skeleton w="50px" h="9px" />
+                        </div>
+                        <Skeleton w="55px" h="20px" r="20px" />
+                      </div>
+                    ))
                   ) : daySlots.length === 0 ? (
-                    <div className="py-8 text-center text-[#555] text-sm">
-                      <div className="text-2xl mb-2 opacity-40">📭</div>
-                      Tidak ada slot pada tanggal ini
+                    <div style={{ padding: "30px", textAlign: "center" }}>
+                      <div
+                        style={{
+                          fontSize: "22px",
+                          opacity: 0.3,
+                          marginBottom: "8px",
+                        }}
+                      >
+                        📭
+                      </div>
+                      <div style={{ color: "#555", fontSize: "13px" }}>
+                        Tidak ada slot pada tanggal ini
+                      </div>
                     </div>
                   ) : (
                     daySlots.map((slot) => (
                       <div
                         key={slot.id}
-                        className={[
-                          "flex items-center justify-between px-3.5 py-3 rounded-lg border transition-all",
-                          !slot.is_booking
-                            ? "bg-[rgba(46,204,113,0.12)] border-[rgba(46,204,113,0.15)]"
-                            : "bg-[rgba(204,34,34,0.12)] border-[rgba(204,34,34,0.15)]",
-                        ].join(" ")}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "12px 13px",
+                          borderRadius: "10px",
+                          border: "1px solid",
+                          marginBottom: "8px",
+                          background: !slot.is_booking
+                            ? "rgba(46,204,113,0.12)"
+                            : "rgba(204,34,34,0.12)",
+                          borderColor: !slot.is_booking
+                            ? "rgba(46,204,113,0.15)"
+                            : "rgba(204,34,34,0.15)",
+                        }}
                       >
-                        <span className="font-oswald text-[15px] font-medium text-[#EAEAEA]">
-                          {formatTime(slot.time_from)} -{" "}
+                        <span
+                          style={{
+                            fontFamily: "Oswald, sans-serif",
+                            fontSize: "14px",
+                            fontWeight: 600,
+                            color: "#EAEAEA",
+                          }}
+                        >
+                          {formatTime(slot.time_from)} –{" "}
                           {formatTime(slot.time_to)}
                         </span>
-                        <div className="text-right">
+                        <div style={{ textAlign: "right" }}>
                           <div
-                            className={[
-                              "text-[11px] font-bold tracking-[0.5px] uppercase",
-                              !slot.is_booking
-                                ? "text-[#2ECC71]"
-                                : "text-[#E57373]",
-                            ].join(" ")}
+                            style={{
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              letterSpacing: "0.5px",
+                              textTransform: "uppercase",
+                              color: !slot.is_booking ? "#2ECC71" : "#E57373",
+                            }}
                           >
                             {slot.is_booking ? "Terisi" : "Tersedia"}
                           </div>
                           {slot.booking_by && (
-                            <div className="text-[10px] text-[#888] mt-0.5">
+                            <div
+                              style={{
+                                fontSize: "10px",
+                                color: "#888",
+                                marginTop: "1px",
+                              }}
+                            >
                               {slot.booking_by}
                             </div>
                           )}
@@ -502,13 +838,21 @@ export default function Page() {
                 </div>
               </div>
             ) : (
-              /* Desktop placeholder */
-              <div className="hidden lg:flex flex-col items-center justify-center bg-[#111111] border border-[rgba(201,168,76,0.15)] border-dashed rounded-xl py-16 px-6 text-center gap-3">
-                <div className="text-3xl opacity-30">📅</div>
-                <p className="font-oswald text-sm text-[#555] tracking-[1px] uppercase">
+              <div style={{ display: "none" }} className="desktop-placeholder">
+                <style>{`@media(min-width:1024px){.desktop-placeholder{display:flex!important;flex-direction:column;align-items:center;justify-content:center;background:#111;border:1px dashed rgba(201,168,76,0.15);border-radius:14px;padding:60px 20px;text-align:center;gap:10px}}`}</style>
+                <div style={{ fontSize: "28px", opacity: 0.25 }}>📅</div>
+                <p
+                  style={{
+                    fontFamily: "Oswald, sans-serif",
+                    fontSize: "11px",
+                    color: "#555",
+                    letterSpacing: "1px",
+                    textTransform: "uppercase",
+                  }}
+                >
                   Pilih tanggal di kalender
                 </p>
-                <p className="text-[11px] text-[#444]">
+                <p style={{ fontSize: "11px", color: "#444" }}>
                   Detail slot akan muncul di sini
                 </p>
               </div>
@@ -517,11 +861,26 @@ export default function Page() {
         </div>
 
         {/* FOOTER */}
-        <div className="text-center px-5 py-6 border-t border-[rgba(201,168,76,0.25)] mt-2.5">
-          <div className="font-oswald text-[13px] text-[#7A6030] tracking-[1px] uppercase">
+        <div
+          style={{
+            textAlign: "center",
+            padding: "20px",
+            borderTop: "1px solid rgba(201,168,76,0.2)",
+            marginTop: "10px",
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "Oswald, sans-serif",
+              fontSize: "12px",
+              color: "#7A6030",
+              letterSpacing: "1px",
+              textTransform: "uppercase",
+            }}
+          >
             Bhaypark Mini Soccer · Kep. Babel
           </div>
-          <div className="text-[11px] text-[#444] mt-1">
+          <div style={{ fontSize: "11px", color: "#333", marginTop: "3px" }}>
             © {new Date().getFullYear()} Pelayanan Markas Polda Kep. Babel
           </div>
         </div>
@@ -529,33 +888,118 @@ export default function Page() {
 
       {/* CONFIRM POPUP */}
       {showConfirm && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-100 flex items-center justify-center p-5 animate-[fadeIn_0.2s_ease]">
-          <div className="bg-[#181818] border border-[rgba(201,168,76,0.55)] rounded-2xl p-7 w-full max-w-85 shadow-[0_20px_60px_rgba(0,0,0,0.6),0_0_0_1px_rgba(201,168,76,0.1)] animate-[slideUp_0.25s_ease]">
-            <div className="w-12 h-12 rounded-full bg-[rgba(201,168,76,0.12)] border border-[rgba(201,168,76,0.55)] flex items-center justify-center mx-auto mb-4 text-[22px]">
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.78)",
+            backdropFilter: "blur(4px)",
+            zIndex: 100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+            animation: "fadeIn 0.2s ease",
+          }}
+        >
+          <div
+            style={{
+              background: "#181818",
+              border: "1px solid rgba(201,168,76,0.55)",
+              borderRadius: "18px",
+              padding: "28px 24px",
+              width: "100%",
+              maxWidth: "340px",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.6)",
+              animation: "slideUp 0.25s ease",
+            }}
+          >
+            <div
+              style={{
+                width: "44px",
+                height: "44px",
+                borderRadius: "50%",
+                background: "rgba(201,168,76,0.12)",
+                border: "1px solid rgba(201,168,76,0.55)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 14px",
+                fontSize: "20px",
+              }}
+            >
               ⚠️
             </div>
-            <div className="font-oswald text-base font-semibold text-[#F0CC6E] text-center uppercase tracking-[0.5px] mb-2.5">
+            <div
+              style={{
+                fontFamily: "Oswald, sans-serif",
+                fontSize: "14px",
+                fontWeight: 600,
+                color: "#F0CC6E",
+                textAlign: "center",
+                textTransform: "uppercase",
+                letterSpacing: "0.5px",
+                marginBottom: "10px",
+              }}
+            >
               Perhatian
             </div>
-            <p className="text-[13px] text-[#888] text-center leading-relaxed mb-5">
-              <strong className="text-[#EAEAEA]">
+            <p
+              style={{
+                fontSize: "13px",
+                color: "#888",
+                textAlign: "center",
+                lineHeight: 1.6,
+                marginBottom: "20px",
+              }}
+            >
+              <strong style={{ color: "#EAEAEA" }}>
                 Bersedia mengganti jadwal
               </strong>{" "}
               jika ada kegiatan resmi Polda Kep. Bangka Belitung yang
               menggunakan lapangan ini?
             </p>
-            <div className="grid grid-cols-2 gap-2.5">
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "10px",
+              }}
+            >
               <button
                 onClick={handleCancel}
-                className="py-3 rounded-lg font-oswald text-sm font-semibold tracking-[1px] uppercase cursor-pointer transition-all text-[#888] bg-white/6 border border-white/10 hover:bg-white/10"
+                style={{
+                  padding: "11px",
+                  borderRadius: "9px",
+                  fontFamily: "Oswald, sans-serif",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  letterSpacing: "1px",
+                  textTransform: "uppercase",
+                  cursor: "pointer",
+                  color: "#888",
+                  background: "rgba(255,255,255,0.06)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  transition: "all 0.15s",
+                }}
               >
                 Tidak
               </button>
               <button
                 onClick={handleConfirm}
-                className="py-3 rounded-lg font-oswald text-sm font-semibold tracking-[1px] uppercase cursor-pointer transition-all text-[#1a0f00] hover:brightness-110 hover:-translate-y-px"
                 style={{
-                  background: "linear-gradient(135deg, #C9A84C, #F0CC6E)",
+                  padding: "11px",
+                  borderRadius: "9px",
+                  fontFamily: "Oswald, sans-serif",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  letterSpacing: "1px",
+                  textTransform: "uppercase",
+                  cursor: "pointer",
+                  color: "#1a0f00",
+                  background: "linear-gradient(135deg,#C9A84C,#F0CC6E)",
+                  border: "none",
+                  transition: "all 0.15s",
                 }}
               >
                 Ya, Bersedia
@@ -565,47 +1009,70 @@ export default function Page() {
         </div>
       )}
 
-      <style>{`
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-      `}</style>
+      {/* Global loading indicator when fetching month data on navigation */}
+      {loadingMonth && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: "16px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            background: "#111",
+            border: "1px solid rgba(201,168,76,0.2)",
+            padding: "8px 14px",
+            borderRadius: "20px",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+            zIndex: 90,
+            pointerEvents: "none",
+          }}
+        >
+          <Spinner />
+          <span
+            style={{
+              fontSize: "11px",
+              color: "#C9A84C",
+              fontFamily: "Mulish, sans-serif",
+              fontWeight: 600,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Memuat data bulan...
+          </span>
+        </div>
+      )}
     </>
   );
 }
 
-// --- HELPER COMPONENTS ---
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-2 mb-3.5">
-      <span className="font-oswald text-sm font-semibold tracking-[2px] uppercase text-[#C9A84C]">
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        marginBottom: "14px",
+      }}
+    >
+      <span
+        style={{
+          fontFamily: "Oswald, sans-serif",
+          fontSize: "12px",
+          fontWeight: 600,
+          letterSpacing: "2px",
+          textTransform: "uppercase",
+          color: "#C9A84C",
+          whiteSpace: "nowrap",
+        }}
+      >
         {children}
       </span>
-      <span className="flex-1 h-px bg-[rgba(201,168,76,0.25)]" />
-    </div>
-  );
-}
-
-function LegendItem({
-  color,
-  label,
-  outlined,
-}: {
-  color: string;
-  label: string;
-  outlined?: boolean;
-}) {
-  return (
-    <div className="flex items-center gap-1.5 text-[11px] text-[#888]">
       <span
-        className="w-2 h-2 rounded-full inline-block"
-        style={{
-          background: color,
-          ...(outlined
-            ? { outline: `2px solid ${color}`, outlineOffset: "1px" }
-            : {}),
-        }}
+        style={{ flex: 1, height: "1px", background: "rgba(201,168,76,0.25)" }}
       />
-      {label}
     </div>
   );
 }
