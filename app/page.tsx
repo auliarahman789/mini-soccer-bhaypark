@@ -302,7 +302,7 @@ export default function Page() {
       return;
     }
     if (!phoneNumber.trim()) {
-      setBookingError("Nomor telepon wajib diisi");
+      setBookingError("Nomor HP wajib diisi untuk konfirmasi pemesanan");
       return;
     }
 
@@ -1127,6 +1127,43 @@ export default function Page() {
                                   gap: "5px",
                                 }}
                               >
+                                {/* ── Helper notice above the phone label ── */}
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "flex-start",
+                                    gap: "7px",
+                                    background: "rgba(201,168,76,0.07)",
+                                    border: "1px solid rgba(201,168,76,0.2)",
+                                    borderRadius: "8px",
+                                    padding: "9px 11px",
+                                    marginBottom: "2px",
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      fontSize: "13px",
+                                      lineHeight: 1,
+                                      flexShrink: 0,
+                                      marginTop: "1px",
+                                    }}
+                                  >
+                                    ℹ️
+                                  </span>
+                                  <p
+                                    style={{
+                                      fontSize: "11px",
+                                      color: "#B8924A",
+                                      lineHeight: 1.55,
+                                      margin: 0,
+                                    }}
+                                  >
+                                    Agar mencantumkan nomor HP saat pemesanan
+                                    untuk konfirmasi permainan dan informasi
+                                    lanjut dari pihak pengelola minisoccer.
+                                  </p>
+                                </div>
+
                                 <span
                                   style={{
                                     fontSize: "10px",
@@ -1134,9 +1171,23 @@ export default function Page() {
                                     fontWeight: 700,
                                     letterSpacing: "1px",
                                     textTransform: "uppercase",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "4px",
                                   }}
                                 >
                                   Nomor Telepon
+                                  <span
+                                    style={{
+                                      fontSize: "9px",
+                                      color: "#E57373",
+                                      fontWeight: 700,
+                                      letterSpacing: "0px",
+                                      textTransform: "none",
+                                    }}
+                                  >
+                                    *wajib
+                                  </span>
                                 </span>
                                 <input
                                   type="tel"
@@ -1145,7 +1196,7 @@ export default function Page() {
                                   onChange={(e) =>
                                     setPhoneNumber(e.target.value)
                                   }
-                                  placeholder="Nomor telepon aktif"
+                                  placeholder="Contoh: 08123456789"
                                   className="bk-input"
                                 />
                               </label>
