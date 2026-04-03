@@ -1,8 +1,6 @@
 "use client";
 
-import Link from "next/dist/client/link";
 import { useState, useEffect, useCallback } from "react";
-import { format } from "date-fns";
 
 type Timetable = {
   id: number;
@@ -11,6 +9,7 @@ type Timetable = {
   time_to: string;
   is_booking: boolean;
   booking_by: string;
+  phone_number: string;
   created_at: string;
   updated_at: string;
 };
@@ -32,6 +31,7 @@ const MONTH_NAMES = [
 ];
 const DAY_NAMES = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
 const SESSION_KEY = "bhaypark_confirmed";
+const WA_NUMBER = "6282345595050";
 
 function formatTime(t: string) {
   return t?.slice(0, 5) ?? "";
@@ -78,18 +78,45 @@ function Spinner({ size = 13 }: { size?: number }) {
   );
 }
 
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        marginBottom: "14px",
+      }}
+    >
+      <span
+        style={{
+          fontFamily: "Oswald, sans-serif",
+          fontSize: "12px",
+          fontWeight: 600,
+          letterSpacing: "2px",
+          textTransform: "uppercase",
+          color: "#C9A84C",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {children}
+      </span>
+      <span
+        style={{ flex: 1, height: "1px", background: "rgba(201,168,76,0.25)" }}
+      />
+    </div>
+  );
+}
+
 export default function Page() {
   const today = new Date();
 
   const [currentYear, setCurrentYear] = useState(today.getFullYear());
   const [currentMonth, setCurrentMonth] = useState(today.getMonth());
-  const [selectedDate, setSelectedDate] = useState<number | null>(
-    today.getDate(),
-  );
+  const [selectedDate, setSelectedDate] = useState<number | null>(null);
 
   const [daySlots, setDaySlots] = useState<Timetable[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
-  const [initialLoad, setInitialLoad] = useState(true); // very first page load
 
   const [monthSummary, setMonthSummary] = useState<Record<number, DaySummary>>(
     {},
@@ -99,6 +126,13 @@ export default function Page() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [pendingDate, setPendingDate] = useState<number | null>(null);
   const [hasConfirmedSession, setHasConfirmedSession] = useState(false);
+
+  const [bookingSlot, setBookingSlot] = useState<Timetable | null>(null);
+  const [bookingBy, setBookingBy] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [bookingLoading, setBookingLoading] = useState(false);
+  const [bookingError, setBookingError] = useState("");
+  const [bookingSuccess, setBookingSuccess] = useState(false);
 
   useEffect(() => {
     const confirmed = sessionStorage.getItem(SESSION_KEY);
@@ -158,7 +192,6 @@ export default function Page() {
         setDaySlots([]);
       } finally {
         setLoadingSlots(false);
-        setInitialLoad(false);
       }
     },
     [],
@@ -169,15 +202,28 @@ export default function Page() {
       fetchDaySlots(selectedDate, currentYear, currentMonth);
   }, [selectedDate, currentYear, currentMonth, fetchDaySlots]);
 
-  useEffect(() => {
-    fetchDaySlots(today.getDate(), today.getFullYear(), today.getMonth());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const getDayStatus = (day: number): "tersedia" | "penuh" | "unknown" => {
+    const s = monthSummary[day];
+    if (!s) return "unknown";
+    return s.hasAvailable ? "tersedia" : "penuh";
+  };
 
   const firstDay = new Date(currentYear, currentMonth, 1).getDay();
   const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
 
+  const tersediaCount = daySlots.filter((s) => !s.is_booking).length;
+  const terisiCount = daySlots.filter((s) => s.is_booking).length;
+
+  const resetForm = () => {
+    setBookingSlot(null);
+    setBookingBy("");
+    setPhoneNumber("");
+    setBookingError("");
+    setBookingSuccess(false);
+  };
+
   const handleDateClick = (day: number) => {
+    resetForm();
     if (hasConfirmedSession) {
       setSelectedDate(day);
       if (window.innerWidth < 1024)
@@ -217,27 +263,76 @@ export default function Page() {
 
   const prevMonth = () => {
     setSelectedDate(null);
+    resetForm();
     if (currentMonth === 0) {
       setCurrentMonth(11);
       setCurrentYear((y) => y - 1);
     } else setCurrentMonth((m) => m - 1);
   };
+
   const nextMonth = () => {
     setSelectedDate(null);
+    resetForm();
     if (currentMonth === 11) {
       setCurrentMonth(0);
       setCurrentYear((y) => y + 1);
     } else setCurrentMonth((m) => m + 1);
   };
 
-  const getDayStatus = (day: number): "tersedia" | "penuh" | "unknown" => {
-    const s = monthSummary[day];
-    if (!s) return "unknown";
-    return s.hasAvailable ? "tersedia" : "penuh";
+  const openBookingForm = (slot: Timetable) => {
+    setBookingSlot(slot);
+    setBookingBy("");
+    setPhoneNumber("");
+    setBookingError("");
+    setBookingSuccess(false);
+    setTimeout(
+      () =>
+        document
+          .getElementById(`booking-form-${slot.id}`)
+          ?.scrollIntoView({ behavior: "smooth", block: "nearest" }),
+      100,
+    );
   };
 
-  const tersediaCount = daySlots.filter((s) => !s.is_booking).length;
-  const terisiCount = daySlots.filter((s) => s.is_booking).length;
+  const handleBookingSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bookingSlot) return;
+    if (!bookingBy.trim()) {
+      setBookingError("Nama wajib diisi");
+      return;
+    }
+    if (!phoneNumber.trim()) {
+      setBookingError("Nomor telepon wajib diisi");
+      return;
+    }
+
+    setBookingLoading(true);
+    setBookingError("");
+    try {
+      const res = await fetch(`/api/timetable/${bookingSlot.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          is_booking: true,
+          booking_by: bookingBy.trim(),
+          phone_number: phoneNumber.trim(),
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setBookingSuccess(true);
+        if (selectedDate !== null)
+          fetchDaySlots(selectedDate, currentYear, currentMonth);
+        fetchMonthSummary();
+      } else {
+        setBookingError(json.error || "Gagal melakukan booking. Coba lagi.");
+      }
+    } catch {
+      setBookingError("Terjadi kesalahan. Coba lagi.");
+    } finally {
+      setBookingLoading(false);
+    }
+  };
 
   return (
     <>
@@ -245,17 +340,60 @@ export default function Page() {
         @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Mulish:wght@300;400;500;600&display=swap');
         *{box-sizing:border-box;margin:0}
         body{font-family:'Mulish',sans-serif}
-        .font-oswald{font-family:'Oswald',sans-serif}
         @keyframes pulse{0%,100%{opacity:0.35}50%{opacity:0.85}}
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
         @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+        .bk-input{
+          width:100%;
+          background:rgba(201,168,76,0.05);
+          border:1px solid rgba(201,168,76,0.35);
+          color:#EAEAEA;
+          padding:10px 13px;
+          border-radius:9px;
+          font-size:13px;
+          font-family:'Mulish',sans-serif;
+          outline:none;
+          color-scheme:dark;
+          transition:border-color 0.2s,background 0.2s,box-shadow 0.2s;
+        }
+        .bk-input:focus{
+          border-color:#C9A84C;
+          background:rgba(201,168,76,0.09);
+          box-shadow:0 0 0 3px rgba(201,168,76,0.12);
+        }
+        .bk-input::placeholder{color:#3e3628}
+
+        .btn-book{
+          background:linear-gradient(135deg,#C9A84C,#F0CC6E);
+          color:#1a0f00;border-radius:7px;
+          font-family:'Oswald',sans-serif;font-weight:600;font-size:11px;
+          letter-spacing:1px;text-transform:uppercase;
+          border:none;cursor:pointer;
+          transition:filter 0.2s,transform 0.15s;
+          padding:5px 12px;white-space:nowrap;
+        }
+        .btn-book:hover{filter:brightness(1.1);transform:translateY(-1px)}
+
+        .wa-btn{
+          display:inline-flex;align-items:center;gap:9px;
+          background:rgba(37,211,102,0.1);
+          border:1px solid rgba(37,211,102,0.28);
+          color:#25D366;
+          padding:10px 20px;border-radius:10px;
+          font-family:'Mulish',sans-serif;font-size:13px;font-weight:600;
+          text-decoration:none;
+          transition:background 0.2s,border-color 0.2s,transform 0.15s;
+          cursor:pointer;
+        }
+        .wa-btn:hover{background:rgba(37,211,102,0.18);border-color:rgba(37,211,102,0.5);transform:translateY(-1px)}
       `}</style>
 
       <div
         style={{ background: "#0A0A0A", minHeight: "100vh", color: "#EAEAEA" }}
       >
-        {/* HEADER */}
+        {/* ── HEADER ── */}
         <div
           style={{
             position: "relative",
@@ -307,30 +445,9 @@ export default function Page() {
           >
             Bhaypark Mini Soccer
           </div>
-          {/* <Link
-            href="/admin/login"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "5px",
-              fontSize: "10px",
-              fontWeight: 600,
-              letterSpacing: "1px",
-              textTransform: "uppercase",
-              padding: "5px 11px",
-              borderRadius: "5px",
-              border: "1px solid rgba(201,168,76,0.35)",
-              color: "#C9A84C",
-              textDecoration: "none",
-              marginTop: "8px",
-              transition: "background 0.2s",
-            }}
-          >
-            🔒 Admin Login
-          </Link> */}
         </div>
 
-        {/* CONTENT */}
+        {/* ── CONTENT GRID ── */}
         <div
           style={{
             maxWidth: "1200px",
@@ -340,28 +457,22 @@ export default function Page() {
           className="content-grid"
         >
           <style>{`
-            .content-grid {
-              display: grid;
-              grid-template-columns: 1fr;
-            }
+            .content-grid{display:grid;grid-template-columns:1fr}
             @media(min-width:1024px){
-              .content-grid {
-                grid-template-columns: minmax(0,1fr) minmax(0,1.6fr) minmax(0,1.4fr);
-                align-items: start;
-                padding: 8px 32px 64px;
-              }
+              .content-grid{grid-template-columns:minmax(0,1fr) minmax(0,1.6fr) minmax(0,1.4fr);align-items:start;padding:8px 32px 64px}
             }
-            .col-rules { padding: 20px 16px; }
-            .col-calendar { padding: 20px 16px; }
-            .col-detail { padding: 20px 16px; }
+            .col-rules,.col-calendar,.col-detail{padding:20px 16px}
             @media(min-width:1024px){
-              .col-rules { padding: 24px 16px; border-right: 1px solid rgba(201,168,76,0.15); }
-              .col-calendar { padding: 24px 24px; border-right: 1px solid rgba(201,168,76,0.15); }
-              .col-detail { padding: 24px 24px; position: sticky; top: 16px; }
+              .col-rules{padding:24px 16px;border-right:1px solid rgba(201,168,76,0.15)}
+              .col-calendar{padding:24px 24px;border-right:1px solid rgba(201,168,76,0.15)}
+              .col-detail{padding:24px 24px;position:sticky;top:16px}
             }
+            .mobile-divider{display:block}
+            @media(min-width:1024px){.mobile-divider{display:none}}
+            @media(min-width:1024px){.desktop-placeholder{display:flex!important;flex-direction:column;align-items:center;justify-content:center;background:#111;border:1px dashed rgba(201,168,76,0.15);border-radius:14px;padding:60px 20px;text-align:center;gap:10px}}
           `}</style>
 
-          {/* ── COL 1: RULES ── */}
+          {/* COL 1: RULES */}
           <div className="col-rules">
             <SectionTitle>Tata Tertib Lapangan</SectionTitle>
             <div
@@ -380,19 +491,17 @@ export default function Page() {
             </div>
           </div>
 
-          {/* Mobile divider */}
           <div
+            className="mobile-divider"
             style={{
               height: "1px",
               background:
                 "linear-gradient(90deg,transparent,#7A6030,transparent)",
               margin: "0 20px",
             }}
-            className="mobile-divider"
           />
-          <style>{`.mobile-divider{display:block}@media(min-width:1024px){.mobile-divider{display:none}}`}</style>
 
-          {/* ── COL 2: CALENDAR ── */}
+          {/* COL 2: CALENDAR */}
           <div className="col-calendar">
             <SectionTitle>Kalender Booking</SectionTitle>
             <div
@@ -403,7 +512,6 @@ export default function Page() {
                 overflow: "hidden",
               }}
             >
-              {/* Nav */}
               <div
                 style={{
                   display: "flex",
@@ -468,8 +576,6 @@ export default function Page() {
                   ›
                 </button>
               </div>
-
-              {/* Day names */}
               <div
                 style={{
                   display: "grid",
@@ -493,8 +599,6 @@ export default function Page() {
                   </div>
                 ))}
               </div>
-
-              {/* Day grid */}
               <div
                 style={{
                   display: "grid",
@@ -610,8 +714,6 @@ export default function Page() {
                   );
                 })}
               </div>
-
-              {/* Legend */}
               <div
                 style={{
                   display: "flex",
@@ -657,16 +759,77 @@ export default function Page() {
             </div>
           </div>
 
-          {/* ── COL 3: DETAIL ── */}
-          <div
-            id="detail-section"
-            className="col-detail"
-            style={{ display: selectedDate || true ? undefined : "none" }}
-          >
-            <style>{`@media(max-width:1023px){.detail-hidden-mobile{display:none}}`}</style>
+          {/* COL 3: DETAIL */}
+          <div id="detail-section" className="col-detail">
             <SectionTitle>Detail Jadwal</SectionTitle>
 
-            {selectedDate ? (
+            {/* Not yet confirmed & no date selected → locked placeholder */}
+            {!selectedDate && !hasConfirmedSession && (
+              <div
+                style={{
+                  background: "#111",
+                  border: "1px dashed rgba(201,168,76,0.18)",
+                  borderRadius: "14px",
+                  padding: "40px 20px",
+                  textAlign: "center",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "26px",
+                    opacity: 0.2,
+                    marginBottom: "10px",
+                  }}
+                >
+                  🔒
+                </div>
+                <p
+                  style={{
+                    fontFamily: "Oswald, sans-serif",
+                    fontSize: "10px",
+                    color: "#555",
+                    letterSpacing: "1.5px",
+                    textTransform: "uppercase",
+                    marginBottom: "6px",
+                  }}
+                >
+                  Pilih tanggal untuk melihat slot
+                </p>
+                <p
+                  style={{
+                    fontSize: "11px",
+                    color: "#3a3a3a",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  Klik tanggal di kalender untuk melanjutkan
+                </p>
+              </div>
+            )}
+
+            {/* Confirmed but no date yet (desktop) */}
+            {!selectedDate && hasConfirmedSession && (
+              <div style={{ display: "none" }} className="desktop-placeholder">
+                <div style={{ fontSize: "28px", opacity: 0.25 }}>📅</div>
+                <p
+                  style={{
+                    fontFamily: "Oswald, sans-serif",
+                    fontSize: "11px",
+                    color: "#555",
+                    letterSpacing: "1px",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Pilih tanggal di kalender
+                </p>
+                <p style={{ fontSize: "11px", color: "#444" }}>
+                  Detail slot akan muncul di sini
+                </p>
+              </div>
+            )}
+
+            {/* Date selected → show slots */}
+            {selectedDate && (
               <div
                 style={{
                   background: "#111111",
@@ -675,7 +838,6 @@ export default function Page() {
                   overflow: "hidden",
                 }}
               >
-                {/* Detail header */}
                 <div
                   style={{
                     display: "flex",
@@ -741,7 +903,6 @@ export default function Page() {
 
                 <div style={{ padding: "10px 10px 6px" }}>
                   {loadingSlots ? (
-                    // Skeleton slots
                     [1, 2, 3].map((i) => (
                       <div
                         key={i}
@@ -780,94 +941,360 @@ export default function Page() {
                     </div>
                   ) : (
                     daySlots.map((slot) => (
-                      <div
-                        key={slot.id}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          padding: "12px 13px",
-                          borderRadius: "10px",
-                          border: "1px solid",
-                          marginBottom: "8px",
-                          background: !slot.is_booking
-                            ? "rgba(46,204,113,0.12)"
-                            : "rgba(204,34,34,0.12)",
-                          borderColor: !slot.is_booking
-                            ? "rgba(46,204,113,0.15)"
-                            : "rgba(204,34,34,0.15)",
-                        }}
-                      >
-                        <span
+                      <div key={slot.id}>
+                        {/* Slot row */}
+                        <div
                           style={{
-                            fontFamily: "Oswald, sans-serif",
-                            fontSize: "14px",
-                            fontWeight: 600,
-                            color: "#EAEAEA",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            padding: "11px 13px",
+                            borderRadius:
+                              bookingSlot?.id === slot.id
+                                ? "10px 10px 0 0"
+                                : "10px",
+                            border: "1px solid",
+                            marginBottom:
+                              bookingSlot?.id === slot.id ? "0" : "8px",
+                            background: !slot.is_booking
+                              ? "rgba(46,204,113,0.08)"
+                              : "rgba(204,34,34,0.08)",
+                            borderColor: !slot.is_booking
+                              ? bookingSlot?.id === slot.id
+                                ? "rgba(201,168,76,0.45)"
+                                : "rgba(46,204,113,0.15)"
+                              : "rgba(204,34,34,0.15)",
+                            borderBottom:
+                              bookingSlot?.id === slot.id ? "none" : undefined,
                           }}
                         >
-                          {formatTime(slot.time_from)} –{" "}
-                          {formatTime(slot.time_to)}
-                        </span>
-                        <div style={{ textAlign: "right" }}>
-                          <div
+                          <span
                             style={{
-                              fontSize: "11px",
-                              fontWeight: 700,
-                              letterSpacing: "0.5px",
-                              textTransform: "uppercase",
-                              color: !slot.is_booking ? "#2ECC71" : "#E57373",
+                              fontFamily: "Oswald, sans-serif",
+                              fontSize: "14px",
+                              fontWeight: 600,
+                              color: "#EAEAEA",
                             }}
                           >
-                            {slot.is_booking ? "Terisi" : "Tersedia"}
+                            {formatTime(slot.time_from)} –{" "}
+                            {formatTime(slot.time_to)}
+                          </span>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "8px",
+                            }}
+                          >
+                            <div style={{ textAlign: "right" }}>
+                              <div
+                                style={{
+                                  fontSize: "11px",
+                                  fontWeight: 700,
+                                  letterSpacing: "0.5px",
+                                  textTransform: "uppercase",
+                                  color: !slot.is_booking
+                                    ? "#2ECC71"
+                                    : "#E57373",
+                                }}
+                              >
+                                {slot.is_booking ? "Terisi" : "Tersedia"}
+                              </div>
+                              {slot.booking_by && (
+                                <div
+                                  style={{
+                                    fontSize: "10px",
+                                    color: "#888",
+                                    marginTop: "1px",
+                                  }}
+                                >
+                                  {slot.booking_by}
+                                </div>
+                              )}
+                            </div>
+                            {!slot.is_booking &&
+                              (bookingSlot?.id === slot.id ? (
+                                <button
+                                  onClick={resetForm}
+                                  style={{
+                                    padding: "5px 10px",
+                                    borderRadius: "7px",
+                                    background: "rgba(255,255,255,0.05)",
+                                    border: "1px solid rgba(255,255,255,0.1)",
+                                    color: "#777",
+                                    fontSize: "10px",
+                                    cursor: "pointer",
+                                    fontFamily: "Mulish, sans-serif",
+                                    fontWeight: 600,
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  Batal
+                                </button>
+                              ) : (
+                                <button
+                                  className="btn-book"
+                                  onClick={() => openBookingForm(slot)}
+                                >
+                                  Booking
+                                </button>
+                              ))}
                           </div>
-                          {slot.booking_by && (
+                        </div>
+
+                        {/* Inline booking form */}
+                        {bookingSlot?.id === slot.id && !bookingSuccess && (
+                          <div
+                            id={`booking-form-${slot.id}`}
+                            style={{
+                              background: "#0e0e0e",
+                              border: "1px solid rgba(201,168,76,0.3)",
+                              borderTop: "1px dashed rgba(201,168,76,0.18)",
+                              borderRadius: "0 0 12px 12px",
+                              padding: "16px",
+                              marginBottom: "8px",
+                            }}
+                          >
+                            {/* Form header */}
                             <div
                               style={{
-                                fontSize: "10px",
-                                color: "#888",
-                                marginTop: "1px",
+                                marginBottom: "14px",
+                                paddingBottom: "11px",
+                                borderBottom: "1px solid rgba(201,168,76,0.1)",
                               }}
                             >
-                              {slot.booking_by}
+                              <div
+                                style={{
+                                  fontFamily: "Oswald, sans-serif",
+                                  fontSize: "11px",
+                                  color: "#C9A84C",
+                                  fontWeight: 600,
+                                  letterSpacing: "1.5px",
+                                  textTransform: "uppercase",
+                                  marginBottom: "3px",
+                                }}
+                              >
+                                Form Booking
+                              </div>
+                              <div style={{ fontSize: "11px", color: "#555" }}>
+                                {formatTime(slot.time_from)} –{" "}
+                                {formatTime(slot.time_to)} &nbsp;·&nbsp;{" "}
+                                {selectedDate} {MONTH_NAMES[currentMonth]}{" "}
+                                {currentYear}
+                              </div>
                             </div>
-                          )}
-                        </div>
+
+                            <form
+                              onSubmit={handleBookingSubmit}
+                              style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "12px",
+                              }}
+                            >
+                              <label
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: "5px",
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    fontSize: "10px",
+                                    color: "#C9A84C",
+                                    fontWeight: 700,
+                                    letterSpacing: "1px",
+                                    textTransform: "uppercase",
+                                  }}
+                                >
+                                  Nama
+                                </span>
+                                <input
+                                  type="text"
+                                  required
+                                  value={bookingBy}
+                                  onChange={(e) => setBookingBy(e.target.value)}
+                                  placeholder="Nama pemesan"
+                                  className="bk-input"
+                                />
+                              </label>
+
+                              <label
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: "5px",
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    fontSize: "10px",
+                                    color: "#C9A84C",
+                                    fontWeight: 700,
+                                    letterSpacing: "1px",
+                                    textTransform: "uppercase",
+                                  }}
+                                >
+                                  Nomor Telepon
+                                </span>
+                                <input
+                                  type="tel"
+                                  required
+                                  value={phoneNumber}
+                                  onChange={(e) =>
+                                    setPhoneNumber(e.target.value)
+                                  }
+                                  placeholder="Nomor telepon aktif"
+                                  className="bk-input"
+                                />
+                              </label>
+
+                              {bookingError && (
+                                <div
+                                  style={{
+                                    background: "rgba(204,34,34,0.09)",
+                                    border: "1px solid rgba(204,34,34,0.26)",
+                                    color: "#E57373",
+                                    fontSize: "12px",
+                                    padding: "8px 11px",
+                                    borderRadius: "8px",
+                                  }}
+                                >
+                                  {bookingError}
+                                </div>
+                              )}
+
+                              <button
+                                type="submit"
+                                disabled={bookingLoading}
+                                style={{
+                                  padding: "11px",
+                                  background: bookingLoading
+                                    ? "transparent"
+                                    : "linear-gradient(135deg,#C9A84C,#F0CC6E)",
+                                  border: bookingLoading
+                                    ? "1px solid rgba(201,168,76,0.25)"
+                                    : "none",
+                                  color: bookingLoading ? "#C9A84C" : "#1a0f00",
+                                  borderRadius: "9px",
+                                  fontFamily: "Oswald, sans-serif",
+                                  fontSize: "13px",
+                                  fontWeight: 600,
+                                  letterSpacing: "1.5px",
+                                  textTransform: "uppercase",
+                                  cursor: bookingLoading
+                                    ? "not-allowed"
+                                    : "pointer",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  gap: "8px",
+                                  marginTop: "2px",
+                                }}
+                              >
+                                {bookingLoading ? (
+                                  <>
+                                    <div
+                                      style={{
+                                        width: 13,
+                                        height: 13,
+                                        borderRadius: "50%",
+                                        border:
+                                          "2px solid rgba(201,168,76,0.2)",
+                                        borderTopColor: "#C9A84C",
+                                        animation: "spin 0.65s linear infinite",
+                                      }}
+                                    />{" "}
+                                    Memproses...
+                                  </>
+                                ) : (
+                                  "Konfirmasi Booking"
+                                )}
+                              </button>
+                            </form>
+                          </div>
+                        )}
+
+                        {/* Success state */}
+                        {bookingSlot?.id === slot.id && bookingSuccess && (
+                          <div
+                            style={{
+                              background: "rgba(46,204,113,0.05)",
+                              border: "1px solid rgba(46,204,113,0.25)",
+                              borderTop: "1px dashed rgba(46,204,113,0.12)",
+                              borderRadius: "0 0 12px 12px",
+                              padding: "18px 16px",
+                              marginBottom: "8px",
+                              textAlign: "center",
+                            }}
+                          >
+                            <div
+                              style={{ fontSize: "22px", marginBottom: "7px" }}
+                            >
+                              ✅
+                            </div>
+                            <div
+                              style={{
+                                fontFamily: "Oswald, sans-serif",
+                                fontSize: "12px",
+                                color: "#2ECC71",
+                                fontWeight: 600,
+                                letterSpacing: "0.5px",
+                                textTransform: "uppercase",
+                                marginBottom: "5px",
+                              }}
+                            >
+                              Booking Berhasil!
+                            </div>
+                            <div
+                              style={{
+                                fontSize: "11px",
+                                color: "#555",
+                                lineHeight: 1.6,
+                              }}
+                            >
+                              Slot {formatTime(slot.time_from)}–
+                              {formatTime(slot.time_to)} telah dipesan atas nama{" "}
+                              <span style={{ color: "#EAEAEA" }}>
+                                {bookingBy}
+                              </span>
+                              .
+                            </div>
+                            <button
+                              onClick={resetForm}
+                              style={{
+                                marginTop: "10px",
+                                padding: "6px 16px",
+                                borderRadius: "7px",
+                                background: "rgba(46,204,113,0.12)",
+                                border: "1px solid rgba(46,204,113,0.25)",
+                                color: "#2ECC71",
+                                fontSize: "11px",
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                fontFamily: "Mulish, sans-serif",
+                              }}
+                            >
+                              Tutup
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))
                   )}
                 </div>
               </div>
-            ) : (
-              <div style={{ display: "none" }} className="desktop-placeholder">
-                <style>{`@media(min-width:1024px){.desktop-placeholder{display:flex!important;flex-direction:column;align-items:center;justify-content:center;background:#111;border:1px dashed rgba(201,168,76,0.15);border-radius:14px;padding:60px 20px;text-align:center;gap:10px}}`}</style>
-                <div style={{ fontSize: "28px", opacity: 0.25 }}>📅</div>
-                <p
-                  style={{
-                    fontFamily: "Oswald, sans-serif",
-                    fontSize: "11px",
-                    color: "#555",
-                    letterSpacing: "1px",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  Pilih tanggal di kalender
-                </p>
-                <p style={{ fontSize: "11px", color: "#444" }}>
-                  Detail slot akan muncul di sini
-                </p>
-              </div>
             )}
           </div>
         </div>
 
-        {/* FOOTER */}
+        {/* ── FOOTER ── */}
         <div
           style={{
             textAlign: "center",
-            padding: "20px",
-            borderTop: "1px solid rgba(201,168,76,0.2)",
-            marginTop: "10px",
+            padding: "28px 20px 36px",
+            borderTop: "1px solid rgba(201,168,76,0.15)",
           }}
         >
           <div
@@ -877,17 +1304,49 @@ export default function Page() {
               color: "#7A6030",
               letterSpacing: "1px",
               textTransform: "uppercase",
+              marginBottom: "16px",
             }}
           >
             Bhaypark Mini Soccer · Kep. Babel
           </div>
-          <div style={{ fontSize: "11px", color: "#333", marginTop: "3px" }}>
+
+          {/* WhatsApp */}
+          <div style={{ marginBottom: "16px" }}>
+            <p
+              style={{ fontSize: "12px", color: "#444", marginBottom: "10px" }}
+            >
+              Butuh informasi? Hubungi kami
+            </p>
+            <a
+              href={`https://wa.me/${WA_NUMBER}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="wa-btn"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 32 32"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                style={{ flexShrink: 0 }}
+              >
+                <path
+                  d="M16 3C8.82 3 3 8.82 3 16c0 2.3.6 4.47 1.64 6.35L3 29l6.84-1.6A13 13 0 0016 29c7.18 0 13-5.82 13-13S23.18 3 16 3zm6.34 18.34c-.28.78-1.63 1.5-2.24 1.56-.57.05-1.1.26-3.72-.78-3.12-1.23-5.1-4.43-5.26-4.64-.16-.2-1.25-1.66-1.25-3.17s.79-2.25 1.07-2.56c.28-.3.6-.38.81-.38h.58c.18 0 .44-.07.69.53l.89 2.32c.07.17.03.37-.06.53l-.36.47c-.13.17-.26.35-.11.67.15.33.67 1.34 1.45 2.17.99 1.06 1.83 1.4 2.16 1.55.33.15.52.12.71-.08l.49-.57c.19-.23.38-.15.63-.05l2.26 1.06c.26.12.43.18.49.28.07.1.07.6-.21 1.38z"
+                  fill="#25D366"
+                />
+              </svg>
+              +62 823-4559-5050
+            </a>
+          </div>
+
+          <div style={{ fontSize: "11px", color: "#282828" }}>
             © {new Date().getFullYear()} Pelayanan Markas Polda Kep. Babel
           </div>
         </div>
       </div>
 
-      {/* CONFIRM POPUP */}
+      {/* ── CONFIRM POPUP ── */}
       {showConfirm && (
         <div
           style={{
@@ -981,7 +1440,6 @@ export default function Page() {
                   color: "#888",
                   background: "rgba(255,255,255,0.06)",
                   border: "1px solid rgba(255,255,255,0.1)",
-                  transition: "all 0.15s",
                 }}
               >
                 Tidak
@@ -1000,7 +1458,6 @@ export default function Page() {
                   color: "#1a0f00",
                   background: "linear-gradient(135deg,#C9A84C,#F0CC6E)",
                   border: "none",
-                  transition: "all 0.15s",
                 }}
               >
                 Ya, Bersedia
@@ -1010,7 +1467,6 @@ export default function Page() {
         </div>
       )}
 
-      {/* Global loading indicator when fetching month data on navigation */}
       {loadingMonth && (
         <div
           style={{
@@ -1045,35 +1501,5 @@ export default function Page() {
         </div>
       )}
     </>
-  );
-}
-
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "8px",
-        marginBottom: "14px",
-      }}
-    >
-      <span
-        style={{
-          fontFamily: "Oswald, sans-serif",
-          fontSize: "12px",
-          fontWeight: 600,
-          letterSpacing: "2px",
-          textTransform: "uppercase",
-          color: "#C9A84C",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {children}
-      </span>
-      <span
-        style={{ flex: 1, height: "1px", background: "rgba(201,168,76,0.25)" }}
-      />
-    </div>
   );
 }
